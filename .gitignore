@@ -1,2 +1,5 @@
 /contexts
 node_modules
+.next
+dist
+.env*.local

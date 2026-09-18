@@ -83,22 +83,30 @@ export class SupabaseRepository {
       for (const item of proposal.items) item.id = uuid(item.id);
     }
     const employeeRows = store.employees.map(({ skills, availability, activeAllocationsCount, ...e }) => e);
-    await Promise.all([
-      upsert('users', store.users.map((u, i) => ({ id: (store as any).__userDbIds?.get(u.authUserId) || uuid(`user:${u.authUserId || i}`), auth_user_id: u.authUserId, role: u.role, employee_id: u.employeeId, name: u.name, email: u.email, avatar_url: u.avatar_url }))),
-      upsert('employees', employeeRows),
-      upsert('employee_skills', store.employees.flatMap(e => e.skills)),
-      upsert('employee_availability', store.employees.flatMap(e => (e.availability || []))),
-      upsert('tasks', store.tasks.map(({ skill_requirements, allocations, ...t }) => ({ ...t, tags: t.tags || [] }))),
-      upsert('task_skill_requirements', store.tasks.flatMap(t => t.skill_requirements)),
-      upsert('allocations', store.allocations),
-      upsert('audit_logs', store.auditLogs.map(({ task_title, employee_name, ...a }) => a)),
-      upsert('skill_gaps', store.skillGaps.map(({ impact_level, recommendation, ...g }) => g)),
-      upsert('agent_settings', [{ id: true, ...store.agentSettings }]),
-    ]);
     const events = store.events.map(e => {
       const proposal = store.proposals.find(p => p.event_id === e.id);
       return { ...e, payload: proposal ? { ...e.payload, proposal } : e.payload };
     });
-    await upsert('events', events);
+
+    // Persist foreign-key parents before their children. Parallel upserts can
+    // race in Postgres, causing allocations or audit rows to arrive before
+    // their referenced tasks/events exist.
+    await Promise.all([
+      upsert('users', store.users.map((u, i) => ({ id: (store as any).__userDbIds?.get(u.authUserId) || uuid(`user:${u.authUserId || i}`), auth_user_id: u.authUserId, role: u.role, employee_id: u.employeeId, name: u.name, email: u.email, avatar_url: u.avatar_url }))),
+      upsert('employees', employeeRows),
+      upsert('agent_settings', [{ id: true, ...store.agentSettings }]),
+    ]);
+
+    await Promise.all([
+      upsert('employee_skills', store.employees.flatMap(e => e.skills)),
+      upsert('employee_availability', store.employees.flatMap(e => (e.availability || []))),
+      upsert('tasks', store.tasks.map(({ skill_requirements, allocations, ...t }) => ({ ...t, tags: t.tags || [] }))),
+      upsert('skill_gaps', store.skillGaps.map(({ impact_level, recommendation, ...g }) => g)),
+      upsert('events', events),
+    ]);
+
+    await upsert('task_skill_requirements', store.tasks.flatMap(t => t.skill_requirements));
+    await upsert('allocations', store.allocations);
+    await upsert('audit_logs', store.auditLogs.map(({ task_title, employee_name, ...a }) => a));
   }
 }

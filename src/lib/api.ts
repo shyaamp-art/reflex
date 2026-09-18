@@ -40,8 +40,13 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  // Current user & Demo user switching
+  // Authentication and current user
   getMe: () => request<{ user: UserSession }>('/api/me'),
+  login: (username: string, password: string) =>
+    request<{ user: UserSession }>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    }),
   switchUser: (userId: string) =>
     request<{ user: UserSession }>('/api/me/switch-user', {
       method: 'POST',

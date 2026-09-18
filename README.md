@@ -239,30 +239,40 @@ authorization boundary.
 
 ## Demo Authentication
 
-The current UI still uses a prototype user switcher. The Supabase Auth users
-can be provisioned now for the login-page implementation with:
+The UI now accepts a username (linked email address or seeded display name) and
+password. The Express authentication endpoint verifies the password through
+Supabase Auth. Supabase stores only the password hash in `auth.users`; the
+application schema never reads or stores raw passwords. Demo Auth users can be
+provisioned with:
 
 ```bash
 npm run seed:demo-auth
 ```
 
-The default development password is:
+The default development passwords are unique per demo account:
 
-```text
-ReflexDemo!2026
-```
+| Account | Password |
+| --- | --- |
+| `alex.rivera@reflex.internal` | `ReflexAlex!2026` |
+| `vikram.m@reflex.internal` | `ReflexVikram!2026` |
+| `elena.r@reflex.internal` | `ReflexElena!2026` |
+| `david.c@reflex.internal` | `ReflexDavid!2026` |
+| `maya.l@reflex.internal` | `ReflexMaya!2026` |
+| `marcus.v@reflex.internal` | `ReflexMarcus!2026` |
+| `aisha.m@reflex.internal` | `ReflexAisha!2026` |
 
 You can override it locally in `.env`:
 
 ```env
-DEMO_MANAGER_PASSWORD=your-local-manager-password
-DEMO_EMPLOYEE_PASSWORD=your-local-employee-password
+DEMO_ALEX_PASSWORD=your-local-manager-password
+DEMO_ELENA_PASSWORD=your-local-employee-password
 ```
 
 The script creates or updates the demo accounts through the Supabase Admin API,
 confirms their email, and links their Auth UUID to the matching `public.users`
-row. Supabase stores password hashes in `auth.users`; no password column is
-added to `public.users`. These credentials are for local demonstrations only.
+row. Supabase stores each password as a hash in `auth.users`; no password
+column is added to `public.users`. These credentials are for local
+demonstrations only.
 
 ## Data and Persistence
 

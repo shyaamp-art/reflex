@@ -262,6 +262,7 @@ employeesRouter.post('/me/availability', (req, res) => {
       availability: result.availability,
       affected_tasks_count: result.affectedTasksCount,
       created_proposals_count: result.createdProposalsCount,
+      events: result.events,
     });
   } catch (err: any) {
     res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });

@@ -801,6 +801,7 @@ export class ReflexStore {
     availability: any;
     affectedTasksCount: number;
     createdProposalsCount: number;
+    events: AppEvent[];
   } {
     const { employeeId, startDate, endDate, isAvailable, reason } = params;
     const emp = this.employees.find((e) => e.id === employeeId);
@@ -826,6 +827,27 @@ export class ReflexStore {
     // If marked unavailable, scan for overlapping active tasks!
     let affectedTasksCount = 0;
     let createdProposalsCount = 0;
+    const triggeredEvents: AppEvent[] = [];
+
+    // Always publish the leave event, including leave that does not currently
+    // affect an allocation, so managers can see the employee state change.
+    if (!isAvailable) {
+      const event: AppEvent = {
+        id: `evt-${Date.now()}-availability`,
+        type: 'PERSON_UNAVAILABLE',
+        payload: {
+          employee_id: employeeId,
+          employee_name: emp.name,
+          start_date: startDate,
+          end_date: endDate,
+          reason,
+          affected_tasks_count: 0,
+        },
+        created_at: nowStr,
+      };
+      this.events.unshift(event);
+      triggeredEvents.push(event);
+    }
 
     if (!isAvailable) {
       // Find active allocations for this employee
@@ -855,6 +877,7 @@ export class ReflexStore {
             created_at: nowStr,
           };
           this.events.unshift(evt);
+          triggeredEvents.push(evt);
 
           // Generate dynamic reallocation proposal
           const propResult = generateReallocationProposal({
@@ -891,6 +914,7 @@ export class ReflexStore {
       availability: newAvail,
       affectedTasksCount,
       createdProposalsCount,
+      events: triggeredEvents,
     };
   }
 

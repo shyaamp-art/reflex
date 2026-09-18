@@ -12,12 +12,10 @@ const supabase = createClient(url, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-const defaultPassword = process.env.DEMO_DEFAULT_PASSWORD || 'ReflexDemo!2026';
-
 const demoUsers = [
   {
     email: 'alex.rivera@reflex.internal',
-    password: process.env.DEMO_MANAGER_PASSWORD || defaultPassword,
+    password: process.env.DEMO_MANAGER_PASSWORD || process.env.DEMO_ALEX_PASSWORD || 'ReflexAlex!2026',
     role: 'MANAGER',
     employeeId: null,
     name: 'Alex Rivera',
@@ -25,7 +23,7 @@ const demoUsers = [
   },
   {
     email: 'vikram.m@reflex.internal',
-    password: process.env.DEMO_EMPLOYEE_PASSWORD || defaultPassword,
+    password: process.env.DEMO_EMPLOYEE_PASSWORD || process.env.DEMO_VIKRAM_PASSWORD || 'ReflexVikram!2026',
     role: 'EMPLOYEE',
     employeeId: 'emp-1',
     name: 'Vikram Malhotra',
@@ -33,7 +31,7 @@ const demoUsers = [
   },
   {
     email: 'elena.r@reflex.internal',
-    password: process.env.DEMO_EMPLOYEE_PASSWORD || defaultPassword,
+    password: process.env.DEMO_EMPLOYEE_PASSWORD || process.env.DEMO_ELENA_PASSWORD || 'ReflexElena!2026',
     role: 'EMPLOYEE',
     employeeId: 'emp-2',
     name: 'Elena Rostova',
@@ -41,7 +39,7 @@ const demoUsers = [
   },
   {
     email: 'david.c@reflex.internal',
-    password: process.env.DEMO_EMPLOYEE_PASSWORD || defaultPassword,
+    password: process.env.DEMO_EMPLOYEE_PASSWORD || process.env.DEMO_DAVID_PASSWORD || 'ReflexDavid!2026',
     role: 'EMPLOYEE',
     employeeId: 'emp-3',
     name: 'David Chen',
@@ -49,7 +47,7 @@ const demoUsers = [
   },
   {
     email: 'maya.l@reflex.internal',
-    password: process.env.DEMO_EMPLOYEE_PASSWORD || defaultPassword,
+    password: process.env.DEMO_EMPLOYEE_PASSWORD || process.env.DEMO_MAYA_PASSWORD || 'ReflexMaya!2026',
     role: 'EMPLOYEE',
     employeeId: 'emp-4',
     name: 'Maya Lin',
@@ -57,7 +55,7 @@ const demoUsers = [
   },
   {
     email: 'marcus.v@reflex.internal',
-    password: process.env.DEMO_EMPLOYEE_PASSWORD || defaultPassword,
+    password: process.env.DEMO_EMPLOYEE_PASSWORD || process.env.DEMO_MARCUS_PASSWORD || 'ReflexMarcus!2026',
     role: 'EMPLOYEE',
     employeeId: 'emp-5',
     name: 'Marcus Vance',
@@ -65,7 +63,7 @@ const demoUsers = [
   },
   {
     email: 'aisha.m@reflex.internal',
-    password: process.env.DEMO_EMPLOYEE_PASSWORD || defaultPassword,
+    password: process.env.DEMO_EMPLOYEE_PASSWORD || process.env.DEMO_AISHA_PASSWORD || 'ReflexAisha!2026',
     role: 'EMPLOYEE',
     employeeId: 'emp-6',
     name: 'Aisha Morales',

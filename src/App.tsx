@@ -33,7 +33,6 @@ import { LoginPage } from './pages/LoginPage.js';
 export default function App() {
   // Current user state
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
-  const [availableUsers, setAvailableUsers] = useState<UserSession[]>([]);
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
 
   // Core Data
@@ -114,37 +113,18 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    api.getUsers()
-      .then((res) => setAvailableUsers(res.users))
-      .catch((err) => console.error('Failed to load login users', err))
-      .finally(() => setLoading(false));
+    setLoading(false);
   }, []);
 
-  const handleLogin = async (userId: string) => {
+  const handleLogin = async (username: string, password: string) => {
     try {
       setLoading(true);
-      await api.switchUser(userId);
+      const result = await api.login(username, password);
+      setCurrentUser(result.user);
       await refreshAllData();
     } catch (err) {
-      console.error('Failed to sign in', err);
       setLoading(false);
-    }
-  };
-
-  // Handle User Switching
-  const handleUserSwitch = async (userId: string) => {
-    try {
-      const res = await api.switchUser(userId);
-      setCurrentUser(res.user);
-      // Auto adjust tab based on role
-      if (res.user.role === 'EMPLOYEE') {
-        setCurrentTab('my-dashboard');
-      } else {
-        setCurrentTab('dashboard');
-      }
-      refreshAllData();
-    } catch (err) {
-      console.error('Failed to switch user', err);
+      throw err;
     }
   };
 
@@ -273,7 +253,7 @@ export default function App() {
   }
 
   if (!currentUser) {
-    return <LoginPage users={availableUsers} onLogin={handleLogin} />;
+    return <LoginPage onLogin={handleLogin} />;
   }
 
   // SLA At-Risk count
@@ -291,7 +271,6 @@ export default function App() {
       {/* Universal Top Header */}
       <Header
         currentUser={currentUser}
-        onUserSwitch={handleUserSwitch}
         onNewTaskClick={() => setIsNewTaskOpen(true)}
         pendingReallocationsCount={pendingReallocationsCount}
         atRiskCount={atRiskCount}

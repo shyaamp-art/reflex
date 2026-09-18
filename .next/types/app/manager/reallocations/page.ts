@@ -1,8 +1,8 @@
-// File: C:\Users\Samarpan\OneDrive\Desktop\Samarpan\reflex\reflex\app\manager\tasks\page.tsx
-import * as entry from '../../../../../app/manager/tasks/page.js'
+// File: C:\Users\Samarpan\OneDrive\Desktop\Samarpan\reflex\reflex\app\manager\reallocations\page.tsx
+import * as entry from '../../../../../app/manager/reallocations/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 
-type TEntry = typeof import('../../../../../app/manager/tasks/page.js')
+type TEntry = typeof import('../../../../../app/manager/reallocations/page.js')
 
 // Check that the entry is a valid entry
 checkFields<Diff<{

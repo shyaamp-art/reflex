@@ -1,15 +1,20 @@
 {
   "pages": {
-    "/(auth)/login/page": [
+    "/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(auth)/login/page.js"
+      "static/chunks/app/page.js"
     ],
     "/layout": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/css/app/layout.css",
       "static/chunks/app/layout.js"
+    ],
+    "/(auth)/login/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(auth)/login/page.js"
     ],
     "/manager/dashboard/page": [
       "static/chunks/webpack.js",
@@ -26,15 +31,35 @@
       "static/chunks/main-app.js",
       "static/chunks/app/manager/skill-gaps/page.js"
     ],
+    "/manager/reallocations/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/manager/reallocations/page.js"
+    ],
     "/manager/tasks/new/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/manager/tasks/new/page.js"
     ],
-    "/manager/tasks/page": [
+    "/manager/employees/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/manager/tasks/page.js"
+      "static/chunks/app/manager/employees/page.js"
+    ],
+    "/employee/dashboard/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/employee/dashboard/page.js"
+    ],
+    "/employee/layout": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/employee/layout.js"
+    ],
+    "/employee/tasks/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/employee/tasks/page.js"
     ]
   }
 }

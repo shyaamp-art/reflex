@@ -2,6 +2,15 @@
 
 **AI workforce decision and resource allocation agent**
 
+![TypeScript](https://img.shields.io/badge/TypeScript-7.x-3178C6?logo=typescript&logoColor=white)
+![React](https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)
+![Express](https://img.shields.io/badge/Express-4-000000?logo=express&logoColor=white)
+![Supabase](https://img.shields.io/badge/Supabase-optional-3FCF8E?logo=supabase&logoColor=white)
+
+> These badges identify technologies declared by the repository. They are not
+> claims about coverage, security certification, or production readiness.
+
 Reflex helps managers allocate individual employees to competing tasks, respond
 to availability and SLA changes, and understand why a decision was made. The
 current repository is a working Vite/React frontend paired with an Express/
@@ -26,6 +35,24 @@ available for the current simplified demo schema.
   select employees or mutate data.
 - Provides separate manager and employee views for the core workflows.
 
+## Table of Contents
+
+- [What It Does](#what-it-does)
+- [Architecture](#architecture)
+- [Decision Model](#decision-model)
+- [Repository Layout](#repository-layout)
+- [Run Locally](#run-locally)
+- [Reallocation Demo](#reallocation-demo)
+- [API Surface](#api-surface)
+- [Commands](#commands)
+- [Testing](#testing)
+- [Performance Benchmarks](#performance-benchmarks)
+- [Data and Persistence](#data-and-persistence)
+- [Security and Trust Boundaries](#security-and-trust-boundaries)
+- [Production Readiness](#production-readiness)
+- [Roadmap](#roadmap)
+- [Current Limitations](#current-limitations)
+
 ## Architecture
 
 ```text
@@ -40,6 +67,91 @@ The deterministic engine is the source of truth for allocation decisions. AI is
 limited to explaining computed facts. The current demo API exposes operational
 routes for tasks, employees, availability, reallocations, events, audit logs,
 skill gaps, settings, and the internal SLA scan.
+
+## Decision Model
+
+Reflex separates eligibility from ranking. A candidate is rejected before final
+scoring when the employee is inactive, unavailable today, missing a required
+skill, projected to exceed 100% workload, or incompatible with the task's work
+mode.
+
+Eligible candidates are ranked with this weighted composite score:
+
+| Factor | Weight | Purpose |
+| --- | ---: | --- |
+| Skill match | 35% | Compare required and available proficiency |
+| Availability | 15% | Account for leave and projected completion horizon |
+| Workload | 20% | Prefer capacity while enforcing the workload ceiling |
+| Performance | 10% | Incorporate the employee performance score |
+| SLA safety | 10% | Protect near-term deadlines and delivery capacity |
+| Location/work mode | 10% | Match remote, hybrid, and onsite requirements |
+
+For multi-person tasks, the allocator prioritizes unmet required-skill coverage,
+then candidate score, while respecting headcount and projected capacity. The
+reallocator responds to employee unavailability, priority changes, and SLA risk.
+Each decision returns a structured reason and score breakdown for review.
+
+The optional LLM integration is intentionally narrow: it receives deterministic
+facts and produces an explanation. It is not the allocator, does not calculate
+eligibility, and must not be treated as an authorization or mutation layer.
+
+## Repository Layout
+
+```text
+.
+├── src/
+│   ├── App.tsx                 # Application shell and workflow coordination
+│   ├── components/             # Shell, modals, and decision drawers
+│   ├── lib/api.ts              # Frontend API client
+│   ├── pages/                  # Manager and employee views
+│   └── types/                  # Shared domain contracts
+├── server/
+│   ├── app.ts                  # Express application factory
+│   ├── http.ts                 # API errors and validation helpers
+│   ├── ai/                     # Optional explanation adapter
+│   ├── db/                     # Store, repository, and Supabase adapter
+│   ├── domain/                 # Scoring, allocation, reallocation, and gaps
+│   └── routes/                 # Operational API routes
+├── supabase/seed.sql           # Optional simplified-schema demo seed
+├── tests/                      # Backend integration and smoke tests
+├── server.ts                   # Development and production bootstrap
+├── REFLEX_MASTER_PLAN.md       # Target architecture and implementation plan
+└── PROJECT_STATUS_LOG.md       # Verified progress and known gaps
+```
+
+Routes translate requests, repositories own storage access, and domain modules
+compute decisions without depending on React components.
+
+### Enterprise Architecture Position
+
+Reflex currently uses a modular monolith rather than horizontally scalable
+microservices. Its event-driven architecture is represented by operational
+events and reallocation triggers, while the current deployment remains a
+single Vite/Express process with an optional Supabase backend.
+
+The codebase is increasingly type-safe at its API and domain boundaries, but
+not every data mutation is yet type-safe and idempotent. Transactional mutation
+boundaries, durable proposal records, and production concurrency controls are
+explicit master-plan work. The repository therefore makes no claim of zero
+technical debt; its known gaps are recorded in
+[`PROJECT_STATUS_LOG.md`](PROJECT_STATUS_LOG.md).
+
+### Mission-Critical Security Position
+
+The production target includes enterprise-grade security controls, but the
+current prototype is not SOC2 compliance ready. Supabase transport and provider
+security should not be confused with end-to-end encryption of the complete
+application workflow. Automated vulnerability scanning, threat modeling, RLS
+verification, secure session handling, and deployment hardening remain required
+before a mission-critical security claim would be appropriate.
+
+### CI/CD and Testing Position
+
+The repository currently provides local TypeScript validation, a backend
+integration flow, a Supabase smoke check, and a production bundle command. It
+does not yet contain fully automated CI/CD pipelines, 100% deterministic test
+coverage, or mutation testing. These are quality-system goals tracked by the
+master plan, not current badges or guarantees.
 
 ## Run Locally
 
@@ -101,6 +213,29 @@ hours after startup.
 The API is available under `http://localhost:3000/api`. Use
 `GET /api/health` to inspect service and persistence status.
 
+## API Surface
+
+The current Express application mounts these route groups:
+
+| Route group | Responsibility |
+| --- | --- |
+| `GET /api/health` | Report service and persistence status |
+| `GET /api/me` | Return the active demo session |
+| `GET /api/users` | List seeded demo users |
+| `POST /api/me/switch-user` | Switch the active demo session |
+| `/api/tasks` | List, create, update, delete, allocate, release, and score tasks |
+| `/api/employees` | List employees and manage availability workflows |
+| `/api/employee` | Employee-facing route alias |
+| `/api/reallocations` | Review, approve, and override proposals |
+| `/api/events` | Read operational events |
+| `/api/audit` | Read allocation and decision history |
+| `/api/skill-gaps` | Read skill-gap insights |
+| `/api/settings` | Read and update agent settings and skills |
+| `/api/internal/cron` | Run the SLA scan endpoint |
+
+This is the current demo contract. The demo session model is not a production
+authorization boundary.
+
 ## Data and Persistence
 
 [`supabase/seed.sql`](supabase/seed.sql) is an optional, credential-free seed
@@ -141,3 +276,81 @@ The next production steps are tracked in [`REFLEX_MASTER_PLAN.md`](REFLEX_MASTER
 For the detailed implementation checklist and architecture decisions, see
 [`REFLEX_MASTER_PLAN.md`](REFLEX_MASTER_PLAN.md) and
 [`PROJECT_STATUS_LOG.md`](PROJECT_STATUS_LOG.md).
+
+## Testing
+
+### Backend integration flow
+
+```bash
+npm run test:backend
+```
+
+This starts the application against the in-memory store and exercises health,
+seeded employees and tasks, candidate suggestions, task creation, employee
+unavailability, reallocation approval, SLA scanning, audit history, and
+skill-gap reporting.
+
+### Supabase smoke check
+
+```bash
+npm run test:supabase:smoke
+```
+
+This is a read-only live check. It requires `REFLEX_PERSISTENCE=supabase`, a
+Supabase URL, and the server service-role key; otherwise it skips rather than
+attempting a remote connection.
+
+The current suite is not a claim of 100% test coverage, mutation-testing
+coverage, or complete end-to-end coverage. The master plan tracks the remaining
+unit, API, RLS, and browser workflow tests.
+
+## Performance Benchmarks
+
+No reproducible load-test results are committed to this repository. The table
+below records the current evidence level instead of inventing benchmark values.
+
+| Area | Current implementation | Evidence status |
+| --- | --- | --- |
+| Candidate scoring | In-process TypeScript calculation over supplied employees and tasks | Functional tests; no published latency distribution |
+| Multi-person allocation | Deterministic greedy coverage selection | Functional tests; no large-workforce benchmark |
+| Persistence | In-memory store or Supabase network calls | Environment- and dataset-dependent |
+| API latency | Express request handling plus domain and persistence work | Not measured in a controlled benchmark |
+| Concurrency behavior | Basic duplicate/stale checks in the demo store | Production transaction and contention testing pending |
+
+Big-O characteristics depend on employees, active tasks, skill requirements, and
+availability windows. They should be established with a versioned benchmark
+harness before making claims such as O(1) behavior, sub-millisecond latency, or
+a specific memory reduction.
+
+## Security and Trust Boundaries
+
+- The Supabase service-role key is server-only and must never be sent to the
+  browser.
+- The deterministic engine, not the LLM, owns allocation eligibility and
+  scoring.
+- The current user switcher is a demo convenience, not authentication.
+- Server-side Supabase Auth sessions, role-aware RLS, employee ownership checks,
+  security headers, rate limiting, and production cron authentication remain
+  roadmap work.
+- The current repository must not be described as enterprise-grade security,
+  SOC2 compliance ready, end-to-end encrypted, or vulnerability-free without
+  independent implementation and verification.
+
+The master plan defines the intended production security model and deployment
+boundary. Until those controls are implemented and tested, treat this as a
+local prototype or controlled demonstration.
+
+## Production Readiness
+
+| Capability | Current state | Production target |
+| --- | --- | --- |
+| UI workflows | Manager and employee demos implemented | Preserve and connect to authenticated live data |
+| Deterministic scoring | Implemented and tested offline | Add exhaustive unit and property tests |
+| Reallocation | Implemented in demo services | Persist proposals and make approvals transactional |
+| Persistence | Simplified Supabase adapter available | Versioned migrations and normalized schema |
+| Identity | Demo sessions and user switching | Supabase Auth with server-side role checks |
+| Authorization | Incomplete | RLS plus route-level authorization |
+| Auditability | Events and audit records | Actor identity, immutable history, and transaction linkage |
+| Realtime | Not wired into the UI | Supabase Realtime with query invalidation |
+| Operations | Local API cron endpoint | Authenticated scheduler and monitoring |
+| Delivery | Local Vite/Express build | Vercel and Supabase deployment with smoke checks |

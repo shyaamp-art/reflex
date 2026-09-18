@@ -1,0 +1,7 @@
+{
+  "/(auth)/login/page": "app/(auth)/login/page.js",
+  "/manager/tasks/new/page": "app/manager/tasks/new/page.js",
+  "/manager/dashboard/page": "app/manager/dashboard/page.js",
+  "/manager/tasks/page": "app/manager/tasks/page.js",
+  "/manager/skill-gaps/page": "app/manager/skill-gaps/page.js"
+}

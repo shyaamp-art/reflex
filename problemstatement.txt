@@ -1,0 +1,35 @@
+AI-04
+
+Al Workforce Decision & Resource Allocation Agent
+
+.
+
+Problem
+Organizations frequently have more tasks than available personnel. Assigning resources requires consideration
+of skills, workload, urgency, SLA commitments, availability, location and historical performance. These
+conditions can change continuously. Build an Al decision system capable of allocating personnel across
+competing tasks and dynamically adjusting those allocations when circumstances change.
+
+The solution should consider factors such as:
+· Employee/engineer skills.
+Current workload.
+Task urgency.
+· SLA commitments.
+Availability.
+Location.
+Historical performance.
+Changing priorities.
+.
+
+The system should demonstrate dynamic reallocation, rather than producing a single static assignment.
+
+Newly unavailable resources.
+
+Problem Statements - Participant Handout
+
+Page 4
+
+Example scenario
+When a high-priority task arrives or an assigned engineer becomes unavailable, the system should reconsider
+the allocation and produce an updated plan.
+Key challenge - Balance competing requirements while continuously adapting resource allocation.

@@ -68,7 +68,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="flex items-center space-x-2">
             <span className="font-bold tracking-tight text-slate-900 text-lg">REFLEX</span>
             <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700 border border-indigo-200/60">
-              AI-04 Decision Agent
+              Decision Agent
             </span>
           </div>
           <p className="hidden text-xs text-slate-500 sm:block">

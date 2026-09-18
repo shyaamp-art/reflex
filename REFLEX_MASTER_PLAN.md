@@ -1,7 +1,7 @@
 # REFLEX — Reconciled Master Plan & Production Execution Blueprint
 
 **Project:** Reflex  
-**Problem Statement:** AI-04 — AI Workforce Decision & Resource Allocation Agent  
+**Problem Statement:** Reflex — AI Workforce Decision & Resource Allocation Agent  
 **Document purpose:** Reconcile the original Plan of Action with the current repository, record completed work, define the corrected target architecture, and provide an implementation blueprint that an AI coding model can execute file-by-file without inventing schemas, routes, or responsibilities.
 
 **Status:** Updated master plan as of 18 September 2026  
@@ -23,6 +23,37 @@ The current frontend repository, however, contains no `app/api/**` route handler
 Therefore the project is currently best classified as:
 
 > **A substantially built frontend prototype + database foundation, awaiting the production application/service/agent layer and live frontend integration.**
+
+## 0.1 Current backend and database implementation
+
+The repository now runs a modular Express backend beside the Vite/React client.
+`server/app.ts` creates the API application, loads the selected persistence
+adapter, hydrates the store before requests, and persists mutations after the
+response. `server/db/store.ts` is the domain-facing in-memory repository used
+by the deterministic allocator, reallocator, workload calculator, audit trail,
+events, and skill-gap aggregation. When `REFLEX_PERSISTENCE=supabase`, the
+Supabase repository hydrates and writes the same operational entities through
+the server-only service-role connection.
+
+The current database artifact is `supabase/seed.sql` plus the simplified
+operational tables: `users`, `employees`, `employee_skills`,
+`employee_availability`, `tasks`, `task_skill_requirements`, `allocations`,
+`events`, `audit_logs`, `skill_gaps`, and `agent_settings`. This is intentionally
+documented as an intermediate schema: it is not yet the production model in
+this plan. The production database work must add versioned migrations,
+Supabase Auth-backed `user_profiles`, a normalized `skills` catalog, UUID
+relationships, durable `allocation_proposals` and
+`allocation_proposal_items`, role-aware RLS, indexes, timestamp/invariant
+triggers, and transactional RPC boundaries.
+
+The API layer is split into route groups for tasks, employees and employee
+self-service, reallocations, events, audit, skill gaps, settings, and the SLA
+cron endpoint. Route handlers validate request shape and delegate allocation
+decisions to deterministic domain services. AI is limited to explanation and
+candidate context; it does not choose an employee or write database state.
+The current session is still a demo directory, so the role middleware provides
+prototype guardrails but must be replaced by Supabase Auth session validation
+and server-side `user_profiles` lookup before production deployment.
 
 ---
 

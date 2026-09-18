@@ -209,6 +209,7 @@ hours after startup.
 | `npm run lint` | Run the TypeScript compiler without emitting files |
 | `npm run test:backend` | Run the offline backend integration flow |
 | `npm run test:supabase:smoke` | Run the read-only Supabase smoke check when configured |
+| `npm run seed:demo-auth` | Create or reset development users in Supabase Auth |
 
 The API is available under `http://localhost:3000/api`. Use
 `GET /api/health` to inspect service and persistence status.
@@ -235,6 +236,33 @@ The current Express application mounts these route groups:
 
 This is the current demo contract. The demo session model is not a production
 authorization boundary.
+
+## Demo Authentication
+
+The current UI still uses a prototype user switcher. The Supabase Auth users
+can be provisioned now for the login-page implementation with:
+
+```bash
+npm run seed:demo-auth
+```
+
+The default development password is:
+
+```text
+ReflexDemo!2026
+```
+
+You can override it locally in `.env`:
+
+```env
+DEMO_MANAGER_PASSWORD=your-local-manager-password
+DEMO_EMPLOYEE_PASSWORD=your-local-employee-password
+```
+
+The script creates or updates the demo accounts through the Supabase Admin API,
+confirms their email, and links their Auth UUID to the matching `public.users`
+row. Supabase stores password hashes in `auth.users`; no password column is
+added to `public.users`. These credentials are for local demonstrations only.
 
 ## Data and Persistence
 

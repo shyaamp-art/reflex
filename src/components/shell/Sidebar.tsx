@@ -41,7 +41,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'dashboard', label: 'Command Center', icon: LayoutDashboard },
     { id: 'tasks', label: 'Tasks & Schedular', icon: CheckSquare, badge: atRiskTasksCount > 0 ? `${atRiskTasksCount}` : undefined, badgeColor: 'bg-amber-100 text-amber-800' },
     { id: 'reallocations', label: 'Reallocations Hub', icon: Repeat, badge: pendingReallocationsCount > 0 ? `${pendingReallocationsCount}` : undefined, badgeColor: 'bg-indigo-100 text-indigo-800' },
-    { id: 'employees', label: 'Engineering Pool', icon: Users },
+    { id: 'employees', label: 'Employees', icon: Users },
     { id: 'skill-gaps', label: 'Skill Gap Intelligence', icon: AlertTriangle },
     { id: 'audit', label: 'Decision Audit Trail', icon: History },
     { id: 'settings', label: 'Agent Policy & Config', icon: Sliders },
@@ -115,7 +115,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       <div className="border-t border-slate-200 pt-3 text-[11px] text-slate-400 text-center">
-        Reflex Decision Engine &bull; AI-04 Spec
+        Reflex Decision Engine
       </div>
     </aside>
   );

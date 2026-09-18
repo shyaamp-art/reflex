@@ -28,10 +28,12 @@ import { NewTaskModal } from './components/drawers/NewTaskModal.js';
 import { AiSuggestionDrawer } from './components/drawers/AiSuggestionDrawer.js';
 import { ReallocationModal } from './components/drawers/ReallocationModal.js';
 import { TaskDetailModal } from './components/drawers/TaskDetailModal.js';
+import { LoginPage } from './pages/LoginPage.js';
 
 export default function App() {
   // Current user state
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
+  const [availableUsers, setAvailableUsers] = useState<UserSession[]>([]);
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
 
   // Core Data
@@ -58,8 +60,25 @@ export default function App() {
   // Fetch all core system state
   const refreshAllData = useCallback(async () => {
     try {
+      const meRes = await api.getMe();
+      setCurrentUser(meRes.user);
+      if (meRes.user.role === 'EMPLOYEE') {
+        const [settingsRes, skillsRes] = await Promise.all([
+          api.getAgentSettings(),
+          api.getSkills(),
+        ]);
+        setSettings(settingsRes.settings);
+        setSkills(skillsRes.skills);
+        setTasks([]);
+        setEmployees([]);
+        setReallocations([]);
+        setEvents([]);
+        setAuditLogs([]);
+        setSkillGaps([]);
+        return;
+      }
+
       const [
-        meRes,
         tasksRes,
         empsRes,
         reallocRes,
@@ -69,7 +88,6 @@ export default function App() {
         settingsRes,
         skillsRes,
       ] = await Promise.all([
-        api.getMe(),
         api.getTasks(),
         api.getEmployees(),
         api.getReallocations(),
@@ -80,7 +98,6 @@ export default function App() {
         api.getSkills(),
       ]);
 
-      setCurrentUser(meRes.user);
       setTasks(tasksRes.items);
       setEmployees(empsRes.items);
       setReallocations(reallocRes.items);
@@ -97,8 +114,22 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    refreshAllData();
-  }, [refreshAllData]);
+    api.getUsers()
+      .then((res) => setAvailableUsers(res.users))
+      .catch((err) => console.error('Failed to load login users', err))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleLogin = async (userId: string) => {
+    try {
+      setLoading(true);
+      await api.switchUser(userId);
+      await refreshAllData();
+    } catch (err) {
+      console.error('Failed to sign in', err);
+      setLoading(false);
+    }
+  };
 
   // Handle User Switching
   const handleUserSwitch = async (userId: string) => {
@@ -158,7 +189,7 @@ export default function App() {
       await api.createTask({
         ...formData,
         allocation_mode: 'MANUAL',
-        selected_employee_ids: [],
+        selected_employee_ids: formData.selected_employee_ids || [],
       });
       setIsNewTaskOpen(false);
       refreshAllData();
@@ -231,7 +262,7 @@ export default function App() {
     handleAnalyzeTaskSuggestions(payload);
   };
 
-  if (loading || !currentUser || !settings) {
+  if (loading || (currentUser && !settings)) {
     return (
       <div className="flex h-screen w-screen flex-col items-center justify-center bg-slate-50 text-slate-600">
         <div className="h-10 w-10 animate-spin rounded-full border-4 border-indigo-600 border-r-transparent mb-4" />
@@ -239,6 +270,10 @@ export default function App() {
         <p className="text-xs text-slate-400 mt-1">Bootstrapping deterministic allocation & AI models...</p>
       </div>
     );
+  }
+
+  if (!currentUser) {
+    return <LoginPage users={availableUsers} onLogin={handleLogin} />;
   }
 
   // SLA At-Risk count
@@ -277,7 +312,7 @@ export default function App() {
         {/* Content Viewport */}
         <main className="flex-1 p-6 lg:p-8 max-w-7xl mx-auto w-full overflow-y-auto">
           {/* Manager Views */}
-          {currentTab === 'dashboard' && (
+          {currentUser.role === 'MANAGER' && currentTab === 'dashboard' && (
             <ManagerDashboard
               tasks={tasks}
               employees={employees}
@@ -290,7 +325,7 @@ export default function App() {
             />
           )}
 
-          {currentTab === 'tasks' && (
+          {currentUser.role === 'MANAGER' && currentTab === 'tasks' && (
             <ManagerTasks
               tasks={tasks}
               onNewTaskClick={() => setIsNewTaskOpen(true)}
@@ -301,7 +336,7 @@ export default function App() {
             />
           )}
 
-          {currentTab === 'reallocations' && (
+          {currentUser.role === 'MANAGER' && currentTab === 'reallocations' && (
             <ManagerReallocations
               proposals={reallocations}
               employees={employees}
@@ -310,11 +345,11 @@ export default function App() {
             />
           )}
 
-          {currentTab === 'employees' && (
+          {currentUser.role === 'MANAGER' && currentTab === 'employees' && (
             <ManagerEmployees employees={employees} />
           )}
 
-          {currentTab === 'skill-gaps' && (
+          {currentUser.role === 'MANAGER' && currentTab === 'skill-gaps' && (
             <ManagerSkillGaps
               skillGaps={skillGaps}
               onReviewSkillGap={async (skill) => {
@@ -324,11 +359,11 @@ export default function App() {
             />
           )}
 
-          {currentTab === 'audit' && <ManagerAudit logs={auditLogs} />}
+          {currentUser.role === 'MANAGER' && currentTab === 'audit' && <ManagerAudit logs={auditLogs} />}
 
-          {currentTab === 'settings' && (
+          {currentUser.role === 'MANAGER' && currentTab === 'settings' && (
             <ManagerSettings
-              settings={settings}
+              settings={settings!}
               onUpdateSettings={async (updated) => {
                 const res = await api.updateAgentSettings(updated);
                 setSettings(res.settings);
@@ -369,6 +404,7 @@ export default function App() {
         onAnalyzeSuggestions={handleAnalyzeTaskSuggestions}
         onSubmitDirect={handleDirectCreateTask}
         availableSkills={skills}
+        employees={employees}
       />
 
       <AiSuggestionDrawer

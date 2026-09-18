@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Priority, WorkMode, Proficiency } from '../../types/index.js';
-import { X, Plus, Trash2, Sparkles, Clock, AlertCircle } from 'lucide-react';
+import { Priority, WorkMode, Proficiency, Employee } from '../../types/index.js';
+import { X, Plus, Trash2, Sparkles, Search } from 'lucide-react';
 
 interface NewTaskModalProps {
   isOpen: boolean;
@@ -8,6 +8,7 @@ interface NewTaskModalProps {
   onAnalyzeSuggestions: (formData: any) => void;
   onSubmitDirect: (formData: any) => void;
   availableSkills: string[];
+  employees: Employee[];
 }
 
 export const NewTaskModal: React.FC<NewTaskModalProps> = ({
@@ -16,6 +17,7 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
   onAnalyzeSuggestions,
   onSubmitDirect,
   availableSkills,
+  employees,
 }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -23,6 +25,10 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
   const [estimatedEffort, setEstimatedEffort] = useState(12);
   const [requiredLocation, setRequiredLocation] = useState<WorkMode>('REMOTE');
   const [tagsInput, setTagsInput] = useState('stripe, payments');
+  const [allocationMode, setAllocationMode] = useState<'AI' | 'MANUAL'>('AI');
+  const [employeeSearch, setEmployeeSearch] = useState('');
+  const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
+  const [profileEmployee, setProfileEmployee] = useState<Employee | null>(null);
 
   // Default SLA: 24h from now
   const defaultSla = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 16);
@@ -58,6 +64,7 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
       tags,
       required_location: requiredLocation,
       skill_requirements: skills,
+      selected_employee_ids: selectedEmployeeIds,
     };
   };
 
@@ -70,6 +77,7 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
   const handleDirectCreate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!title) return alert('Task title is required');
+    if (allocationMode === 'MANUAL' && selectedEmployeeIds.length === 0) return alert('Select at least one employee for manual assignment');
     onSubmitDirect(getPayload());
   };
 
@@ -92,7 +100,41 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleRunAi} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+        <form onSubmit={allocationMode === 'AI' ? handleRunAi : handleDirectCreate} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+          <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-indigo-900">Assignment method</span>
+              <div className="flex rounded-lg border border-indigo-200 bg-white p-0.5">
+                <button type="button" onClick={() => setAllocationMode('AI')} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${allocationMode === 'AI' ? 'bg-indigo-600 text-white' : 'text-slate-600'}`}>AI suggestions</button>
+                <button type="button" onClick={() => setAllocationMode('MANUAL')} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${allocationMode === 'MANUAL' ? 'bg-indigo-600 text-white' : 'text-slate-600'}`}>Manual selection</button>
+              </div>
+            </div>
+            {allocationMode === 'MANUAL' && (
+              <div className="mt-3">
+                <div className="relative">
+                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                  <input value={employeeSearch} onChange={(e) => setEmployeeSearch(e.target.value)} placeholder="Search employees by name or role..." className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs outline-none focus:border-indigo-500" />
+                </div>
+                <div className="mt-2 max-h-36 space-y-1 overflow-y-auto">
+                  {employees
+                    .filter((employee) => `${employee.name} ${employee.role_title}`.toLowerCase().includes(employeeSearch.toLowerCase()))
+                    .map((employee) => {
+                      const selected = selectedEmployeeIds.includes(employee.id);
+                      return (
+                        <div key={employee.id} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${selected ? 'bg-indigo-100' : 'bg-white'}`}>
+                          <button type="button" onClick={() => setProfileEmployee(employee)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                            <img src={employee.avatar_url} alt="" className="h-7 w-7 rounded-full object-cover" />
+                            <span className="min-w-0"><span className="block truncate text-xs font-semibold text-slate-800 underline decoration-dotted">{employee.name}</span><span className="block truncate text-[10px] text-slate-500">{employee.role_title}</span></span>
+                          </button>
+                          <button type="button" onClick={() => setSelectedEmployeeIds((ids) => selected ? ids.filter((id) => id !== employee.id) : [...ids, employee.id])} className={`rounded-md px-2 py-1 text-[10px] font-bold ${selected ? 'bg-indigo-600 text-white' : 'border border-slate-200 text-slate-600'}`}>{selected ? 'Selected' : 'Assign'}</button>
+                        </div>
+                      );
+                    })}
+                </div>
+                <p className="mt-2 text-[11px] text-slate-500">{selectedEmployeeIds.length} employee{selectedEmployeeIds.length === 1 ? '' : 's'} selected. Click a name to view the profile.</p>
+              </div>
+            )}
+          </div>
           {/* Title */}
           <div>
             <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
@@ -287,30 +329,37 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
 
           {/* Footer Actions */}
           <div className="pt-4 border-t border-slate-200 flex items-center justify-between">
-            <button
-              type="button"
-              onClick={handleDirectCreate}
-              className="text-xs text-slate-600 font-semibold hover:underline"
-            >
-              Save As Unassigned
-            </button>
+            <button type="button" onClick={onClose} className="text-xs text-slate-600 font-semibold hover:underline">Cancel</button>
 
             <div className="flex items-center space-x-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition"
-              >
-                Cancel
-              </button>
               <button
                 type="submit"
                 className="flex items-center space-x-1.5 rounded-xl bg-indigo-600 px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-indigo-700 transition active:scale-95"
               >
                 <Sparkles className="h-4 w-4" />
-                <span>Get AI Candidate Suggestions</span>
+                <span>{allocationMode === 'AI' ? 'Get AI Candidate Suggestions' : 'Create & Assign Task'}</span>
               </button>
             </div>
+            {profileEmployee && (
+              <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setProfileEmployee(null)}>
+                <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-3">
+                      <img src={profileEmployee.avatar_url} alt={profileEmployee.name} className="h-12 w-12 rounded-full object-cover" />
+                      <div><h3 className="font-bold text-slate-900">{profileEmployee.name}</h3><p className="text-xs text-slate-500">{profileEmployee.role_title}</p></div>
+                    </div>
+                    <button type="button" onClick={() => setProfileEmployee(null)} className="text-slate-400 hover:text-slate-700"><X className="h-4 w-4" /></button>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded-lg bg-slate-50 p-2"><span className="block text-slate-400">Team</span><strong>{profileEmployee.team.replace('_', ' ')}</strong></div>
+                    <div className="rounded-lg bg-slate-50 p-2"><span className="block text-slate-400">Workload</span><strong>{profileEmployee.current_workload_percent}%</strong></div>
+                    <div className="rounded-lg bg-slate-50 p-2"><span className="block text-slate-400">Location</span><strong>{profileEmployee.location}</strong></div>
+                    <div className="rounded-lg bg-slate-50 p-2"><span className="block text-slate-400">Status</span><strong>{profileEmployee.status}</strong></div>
+                  </div>
+                  <div className="mt-3"><span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Skills</span><div className="mt-1 flex flex-wrap gap-1">{profileEmployee.skills.map((skill) => <span key={skill.id} className="rounded bg-indigo-50 px-2 py-1 text-[10px] text-indigo-700">{skill.skill_name} ({skill.proficiency})</span>)}</div></div>
+                </div>
+              </div>
+            )}
           </div>
         </form>
       </div>

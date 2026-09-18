@@ -4,6 +4,19 @@
 **Project:** Reflex — AI Workforce Decision & Resource Allocation Agent  
 **Current backend mode:** Supabase-connected simplified schema  
 
+## Requested change log — 2026-09-19
+
+- [x] Added a login page that lets a manager or employee choose a workspace before the application shell loads. Production Supabase Auth remains a Phase 2 task.
+- [x] Added AI-suggestion and manual-assignment modes to task creation. Manual mode searches employees by name/role, supports clickable names, shows a profile window, and sends selected employee IDs to the backend.
+- [x] Renamed the manager navigation label from “Engineering Pool” to “Employees”.
+- [x] Added prototype API role guards for manager mutations and employee self-service routes, plus role-aware rendering for manager screens.
+- [x] Removed all user-facing and plan text containing the former legacy identifier.
+- [x] Expanded `REFLEX_MASTER_PLAN.md` with the current Express, repository, Supabase adapter, schema, route, and production database responsibilities.
+
+The remaining production work is still tracked in the ordered plan below, especially
+Supabase Auth/session validation, `user_profiles`, RLS, migrations, durable
+proposal tables, transactional writes, and live verification.
+
 
 ## Current status
 

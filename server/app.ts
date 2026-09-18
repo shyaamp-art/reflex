@@ -25,6 +25,39 @@ export function createApp() {
         void store.persist().catch((error) => {
           console.error('Supabase persistence write failed:', error instanceof Error ? error.message : 'unknown error');
         });
+
+        const currentUser = () => store.users[currentSessionIndex] || store.users[0];
+        const deny = (res: express.Response, message: string) =>
+          res.status(403).json({ error: { code: 'FORBIDDEN', message } });
+        const requireManager = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+          if (currentUser()?.role !== 'MANAGER') return deny(res, 'Manager role is required for this operation.');
+          next();
+        };
+
+        // The prototype session is still demo-backed, but every protected mutation
+        // is role-gated here so the UI cannot be used as the authorization boundary.
+        app.use('/api/tasks', requireManager);
+        app.use('/api/reallocations', requireManager);
+        app.use('/api/settings', (req, res, next) => {
+          if (req.method === 'GET' || currentUser()?.role === 'MANAGER') return next();
+          return deny(res, 'Manager role is required for this operation.');
+        });
+        app.use('/api/employees', (req, res, next) => {
+          const user = currentUser();
+          if (user?.role === 'MANAGER') return next();
+          if (req.method === 'GET' && req.path === `/${user?.employeeId}`) return next();
+          return deny(res, 'Only managers may access workforce records.');
+        });
+        app.use('/api/employee', (req, res, next) => {
+          const user = currentUser();
+          if (user?.role !== 'EMPLOYEE') return deny(res, 'Employee role is required for this operation.');
+          const requestedId = typeof req.query.employee_id === 'string'
+            ? req.query.employee_id
+            : req.body?.employee_id;
+          if (requestedId && requestedId !== user.employeeId) return deny(res, 'Employees may only access their own records.');
+          if (req.body && user.employeeId) req.body.employee_id = user.employeeId;
+          next();
+        });
       });
       next();
     } catch (error) {

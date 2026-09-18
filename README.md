@@ -1,66 +1,143 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Reflex
 
-# Reflex backend demo
+**AI workforce decision and resource allocation agent**
 
-The Express backend uses a deterministic allocation engine, events, audit logs,
-skill-gap analysis, and an SLA scan. It defaults to in-memory persistence. Set
-`REFLEX_PERSISTENCE=supabase`, `SUPABASE_URL` (or `NEXT_PUBLIC_SUPABASE_URL`),
-and the server-only `SUPABASE_SERVICE_ROLE_KEY` to hydrate from and persist to
-Supabase. Publishable/anon keys are never used for privileged writes.
+Reflex helps managers allocate individual employees to competing tasks, respond
+to availability and SLA changes, and understand why a decision was made. The
+current repository is a working Vite/React frontend paired with an Express/
+TypeScript API and a deterministic workforce engine. Supabase persistence is
+available for the current simplified demo schema.
 
-The repository targets the simplified schema in `supabase/seed.sql`:
+> **Project status:** functional prototype and database foundation. The
+> production identity, authorization, migration, and transaction model described
+> in [`REFLEX_MASTER_PLAN.md`](REFLEX_MASTER_PLAN.md) is still being implemented.
+
+## What It Does
+
+- Scores candidates using skill match, availability, workload, performance, SLA
+  safety, and work mode.
+- Applies hard eligibility rules before assigning work.
+- Plans multi-person assignments while covering required skills and headcount.
+- Generates reallocation proposals when an employee becomes unavailable or a
+  task becomes risky.
+- Supports manager approval and manual override of proposed transfers.
+- Records events, allocation changes, audit history, and skill-gap insights.
+- Uses an optional Gemini explanation layer without giving an LLM authority to
+  select employees or mutate data.
+- Provides separate manager and employee views for the core workflows.
+
+## Architecture
+
+```text
+React/Vite UI
+    -> Express API routes
+        -> repositories and domain services
+            -> deterministic scorer, allocator, reallocator, SLA scanner
+                -> in-memory store or Supabase adapter
+```
+
+The deterministic engine is the source of truth for allocation decisions. AI is
+limited to explaining computed facts. The current demo API exposes operational
+routes for tasks, employees, availability, reallocations, events, audit logs,
+skill gaps, settings, and the internal SLA scan.
+
+## Run Locally
+
+### Prerequisites
+
+- Node.js with npm
+
+### Install and start
+
+```bash
+npm install --legacy-peer-deps
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). The default `dummy` mode
+uses seeded in-memory data and does not require Supabase, credentials, or a
+network connection.
+
+### Environment variables
+
+Create a `.env` file when using Supabase or Gemini. The important settings are:
+
+```dotenv
+REFLEX_PERSISTENCE=dummy
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+GEMINI_API_KEY=
+```
+
+Set `REFLEX_PERSISTENCE=supabase` with `SUPABASE_URL` and the server-only
+`SUPABASE_SERVICE_ROLE_KEY` to hydrate and persist the demo data. Never expose
+the service-role key to the browser. `GEMINI_API_KEY` is optional; deterministic
+explanations are used when it is absent.
+
+## Reallocation Demo
+
+The seeded data includes **Kubernetes Ingress Controller Memory Spike
+Mitigation**, with Elena Rostova allocated and an SLA deadline approximately 2.5
+hours after startup.
+
+1. In the header, switch to **Elena Rostova**.
+2. Open **Report Leave / Unavailability** and submit the default leave window.
+3. Switch back to **Alex Rivera** and open **Reallocations > Pending Approval**.
+4. Approve the transfer, or use **Review & Override** to select another
+   candidate.
+5. Confirm that the allocation, event feed, and audit history have updated.
+
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the Vite frontend and Express API |
+| `npm run build` | Build the frontend and bundle the server |
+| `npm run start` | Start the production server from `dist/` |
+| `npm run lint` | Run the TypeScript compiler without emitting files |
+| `npm run test:backend` | Run the offline backend integration flow |
+| `npm run test:supabase:smoke` | Run the read-only Supabase smoke check when configured |
+
+The API is available under `http://localhost:3000/api`. Use
+`GET /api/health` to inspect service and persistence status.
+
+## Data and Persistence
+
+[`supabase/seed.sql`](supabase/seed.sql) is an optional, credential-free seed
+artifact. It creates deterministic demo data for the current simplified schema:
+
 `users`, `employees`, `employee_skills`, `employee_availability`, `tasks`,
 `task_skill_requirements`, `allocations`, `events`, `audit_logs`, `skill_gaps`,
-and `agent_settings`. This differs from the master plan's
-`allocation_logs` and `skill_gap_events` names/types. Reallocation proposals
-have no table in the executed schema, so they are checkpointed in event
-payloads. Delete endpoints and the process-local skills catalog are not
-synchronized.
+and `agent_settings`.
 
-`supabase/seed.sql` is an optional, credential-free Postgres/Supabase seed
-artifact. It creates the small demo schema when absent and uses deterministic
-UUIDs with idempotent upserts. It is not executed by the app or tests; review it
-against production migrations before applying it to any project.
+The seed is not applied automatically by the app or tests. Review it before
+using it in a real Supabase project. The current adapter does not yet match the
+master-plan production model, which adds Supabase Auth and `user_profiles`, a
+normalized skills catalog, UUID-based relationships, durable
+`allocation_proposals`, role-aware RLS, and versioned migrations.
 
-View your app in AI Studio: https://ai.studio/apps/e4c2fc90-8ae7-4e22-906c-1adca05c445e
+## Roadmap
 
-## Run Locally (no Supabase required)
+The next production steps are tracked in [`REFLEX_MASTER_PLAN.md`](REFLEX_MASTER_PLAN.md):
 
-**Prerequisites:**  Node.js
+1. Convert the current SQL into versioned migrations and reconcile the schema.
+2. Replace demo user switching with Supabase Auth, server-side sessions, and
+   role-aware authorization.
+3. Add durable proposal records and transactional mutation boundaries.
+4. Replace demo persistence paths with the production repository and service
+   layer while preserving the existing UI.
+5. Add Realtime updates, security hardening, API contracts, and end-to-end tests.
+6. Deploy the application on Vercel with Supabase Postgres/Auth/Realtime.
 
+## Current Limitations
 
-1. Install dependencies: `npm install --legacy-peer-deps`
-2. Copy `.env.example` to `.env` (Gemini is optional; deterministic explanations are used without it).
-3. Run the app: `npm run dev`
-4. Open `http://localhost:3000`. The demo uses the in-memory seeded store; no
-   Supabase project, URL, key, migration, or network connection is needed.
+- Demo user switching remains in place; it is not an authentication boundary.
+- Authorization and RLS are not yet production-complete.
+- Reallocation proposals are checkpointed in event payloads rather than stored
+  in dedicated proposal tables.
+- Multi-table writes are not yet backed by production transaction functions.
+- The simplified seed schema is not a substitute for the planned migrations.
 
-`npm run test:supabase:smoke` is a read-only live check. It skips unless
-`REFLEX_PERSISTENCE=supabase`, a URL, and the service-role key are configured.
-
-### Three-hour reallocation demo
-
-1. The seeded manager view contains **Kubernetes Ingress Controller Memory Spike
-   Mitigation**, with Elena Rostova actively allocated and an SLA deadline
-   2.5 hours from server startup. It is visible under **SLA at risk** and in
-   **Tasks**.
-2. Use the user switcher in the header to select **Elena Rostova** (the
-   employee portal), then choose **Report Leave / Unavailability**.
-3. Leave the dates at their defaults (today through three days from today),
-   keep the reason, and click **Submit Leave Window**. The response banner
-   confirms the affected active task and proposal count.
-4. Switch back to **Alex Rivera**, open **Reallocations** in the sidebar, and
-   select **Pending Approval**. The new unavailability proposal is visible with
-   the impacted task, releasing assignee, and replacement candidate.
-5. Click **Approve Transfer** (or **Review & Override** to choose a candidate).
-   The proposal changes to **APPROVED**, the active allocation is replaced,
-   and the audit/event feeds update.
-
-The API is available at `http://localhost:3000/api`. `GET /api/health` reports
-the active `dummy` persistence mode. Run `npm run lint` and `npm run build` to
-validate the server and frontend bundle. Run `npm run test:backend` for the
-backend-only integration flow; it starts an in-memory app and exercises health,
-seeded employees/tasks, allocation suggestions, task allocation, unavailability
-reallocation approval, SLA scanning, audit history, and skill-gap reporting.
+For the detailed implementation checklist and architecture decisions, see
+[`REFLEX_MASTER_PLAN.md`](REFLEX_MASTER_PLAN.md) and
+[`PROJECT_STATUS_LOG.md`](PROJECT_STATUS_LOG.md).

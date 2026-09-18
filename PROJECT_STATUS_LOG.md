@@ -3,7 +3,7 @@
 **Last updated:** 2026-09-19  
 **Project:** Reflex — AI Workforce Decision & Resource Allocation Agent  
 **Current backend mode:** Supabase-connected simplified schema  
-**Repository location:** `C:\Users\shyaa\.copilot\chats\2026-09-19\psychic-tribble-506bede7\reflex`
+
 
 ## Current status
 

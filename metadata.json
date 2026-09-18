@@ -1,0 +1,7 @@
+{
+  "name": "Reflex - AI Workforce Decision & Resource Allocation Agent",
+  "description": "Dynamic workforce resource allocation engine featuring deterministic 6-factor scoring, multi-skill greedy coverage, SLA escalation, real-time reallocation proposals, and AI-powered audit explanations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

@@ -1,8 +1,9 @@
 import { Router } from 'express';
-import { store } from '../db/store.js';
+import { store, uid } from '../db/store.js';
 import { buildAllocationPlan } from '../domain/allocator.js';
 import { generateExplanationWithGemini } from '../ai/explainer.js';
 import { Task, TaskSkillRequirement } from '../../src/types/index.js';
+import { sendError } from '../http.js';
 
 export const tasksRouter = Router();
 
@@ -30,11 +31,13 @@ tasksRouter.get('/', (req, res) => {
     }
 
     if (sla === 'at-risk') {
-      const fourHoursMs = 4 * 60 * 60 * 1000;
+      const lookaheadHours = store.agentSettings.sla_lookahead_hours || 4;
+      const lookaheadMs = lookaheadHours * 60 * 60 * 1000;
       const now = Date.now();
       list = list.filter((t) => {
         const diff = new Date(t.sla_deadline).getTime() - now;
-        return t.status !== 'COMPLETED' && diff > 0 && diff <= fourHoursMs;
+        // Include breached (overdue) SLAs — anything at/past deadline.
+        return t.status !== 'COMPLETED' && diff <= lookaheadMs;
       });
     }
 
@@ -106,7 +109,7 @@ tasksRouter.post('/allocation-suggestions', async (req, res) => {
     };
 
     // Calculate plan
-    const plan = buildAllocationPlan(mockTask, store.employees, new Date());
+    const plan = buildAllocationPlan(mockTask, store.employees, new Date(), {}, store.agentSettings.sla_lookahead_hours || 4);
 
     // Generate LLM explanation asynchronously
     const explanation = await generateExplanationWithGemini({
@@ -122,16 +125,20 @@ tasksRouter.post('/allocation-suggestions', async (req, res) => {
       eligible_count: plan.rankedCandidates.filter((c) => c.eligible).length,
       status: plan.status,
       uncovered_requirements: plan.uncoveredRequirements,
+      total_headcount_required: plan.totalHeadcountRequired,
+      total_headcount_filled: plan.totalHeadcountFilled,
       explanation,
       generated_at: new Date().toISOString(),
     });
   } catch (err: any) {
-    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
+    sendError(res, err);
   }
 });
 
 // POST /api/tasks
 tasksRouter.post('/', (req, res) => {
+  let taskId: string | undefined;
+  let eventId: string | undefined;
   try {
     const {
       title,
@@ -152,12 +159,12 @@ tasksRouter.post('/', (req, res) => {
       });
     }
 
-    const taskId = `task-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    taskId = uid('task');
     const nowStr = new Date().toISOString();
 
     const formattedRequirements: TaskSkillRequirement[] = skill_requirements.map((r: any, idx: number) => ({
-      id: `req-${Date.now()}-${idx}`,
-      task_id: taskId,
+      id: uid(`req-${idx}`),
+      task_id: taskId!,
       skill_name: r.skill_name,
       proficiency: r.proficiency || 'INTERMEDIATE',
       people_required: r.people_required || 1,
@@ -182,7 +189,7 @@ tasksRouter.post('/', (req, res) => {
     store.tasks.unshift(newTask);
 
     // Record Event
-    const eventId = `evt-${Date.now()}`;
+    eventId = uid('evt');
     store.events.unshift({
       id: eventId,
       type: 'NEW_TASK',
@@ -216,7 +223,41 @@ tasksRouter.post('/', (req, res) => {
       audit_log_id: auditLogId,
     });
   } catch (err: any) {
-    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
+    // Roll back the orphaned task + event when allocation fails so a 4xx
+    // never persists a task with no allocation.
+    if (taskId) {
+      store.tasks = store.tasks.filter((t) => t.id !== taskId);
+      if (eventId) store.events = store.events.filter((e) => e.id !== eventId);
+      store.recalculateAllWorkloads();
+    }
+    sendError(res, err);
+  }
+});
+
+// POST /api/tasks/:id/allocations — allocate an existing task without
+// creating a duplicate (used by "Run AI Allocation Suggestions" on tasks).
+tasksRouter.post('/:id/allocations', (req, res) => {
+  try {
+    const task = store.tasks.find((t) => t.id === req.params.id);
+    if (!task) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Task not found' } });
+    }
+    const { employee_ids = [], selected_employee_ids = [], allocation_mode = 'AI', reason } = req.body || {};
+    const ids = (employee_ids.length ? employee_ids : selected_employee_ids) as string[];
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(422).json({ error: { code: 'VALIDATION_ERROR', message: 'employee_ids array is required.' } });
+    }
+    const result = store.executeAllocation({
+      taskId: task.id,
+      employeeIds: ids,
+      allocatedBy: allocation_mode === 'AI' ? 'AI' : 'MANUAL',
+      actorUserId: 'user-manager-1',
+      actorName: 'Alex Rivera',
+      reason: reason || 'Manager allocation for existing task.',
+    });
+    res.status(201).json({ task: result.task, allocations: result.allocations, audit_log_id: result.auditLogId });
+  } catch (err: any) {
+    sendError(res, err);
   }
 });
 
@@ -266,7 +307,7 @@ tasksRouter.patch('/:id', (req, res) => {
 
     // If priority changed, emit event & log
     if (priority && priority !== oldPriority) {
-      const evtId = `evt-${Date.now()}`;
+      const evtId = uid('evt');
       store.events.unshift({
         id: evtId,
         type: 'PRIORITY_CHANGE',
@@ -275,7 +316,7 @@ tasksRouter.patch('/:id', (req, res) => {
       });
 
       store.auditLogs.unshift({
-        id: `log-${Date.now()}`,
+        id: uid('log'),
         task_id: task.id,
         employee_id: 'system',
         event_id: evtId,
@@ -332,7 +373,7 @@ tasksRouter.patch('/:id/status', (req, res) => {
           alloc.released_at = task.updated_at;
 
           store.auditLogs.unshift({
-            id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            id: uid('log'),
             task_id: task.id,
             employee_id: alloc.employee_id,
             action: 'RELEASED',
@@ -372,7 +413,7 @@ tasksRouter.post('/:id/allocations/release', (req, res) => {
       new_proposal: result.newProposal,
     });
   } catch (err: any) {
-    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
+    sendError(res, err);
   }
 });
 
@@ -392,10 +433,20 @@ tasksRouter.delete('/:id', (req, res) => {
       }
     }
 
+    // Expire pending proposals so none point at a deleted task.
+    const nowStr = new Date().toISOString();
+    for (const proposal of store.proposals) {
+      if (proposal.task_id === req.params.id && proposal.status === 'PENDING') {
+        proposal.status = 'EXPIRED';
+        proposal.decided_at = nowStr;
+        proposal.decision_note = 'Task deleted; proposal expired.';
+      }
+    }
+
     store.tasks.splice(idx, 1);
     store.recalculateAllWorkloads();
     res.status(204).send();
   } catch (err: any) {
-    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
+    sendError(res, err);
   }
 });

@@ -16,8 +16,8 @@ import {
 interface TaskDetailModalProps {
   taskId: string | null;
   onClose: () => void;
-  onUpdateStatus: (taskId: string, status: string) => void;
-  onReleaseAllocation: (taskId: string, allocationId: string) => void;
+  onUpdateStatus: (taskId: string, status: string) => void | Promise<void>;
+  onReleaseAllocation: (taskId: string, allocationId: string) => void | Promise<void>;
   onRequestSuggestions: (task: Task) => void;
 }
 
@@ -170,10 +170,10 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                         </div>
 
                         <button
-                          onClick={() => {
+                          onClick={async () => {
                             if (confirm(`Release ${alloc.employee?.name} from task? This will free capacity and can trigger reallocation.`)) {
-                              onReleaseAllocation(task.id, alloc.id);
-                              load();
+                              await onReleaseAllocation(task.id, alloc.id);
+                              await load();
                             }
                           }}
                           className="flex items-center space-x-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 hover:border-rose-300 transition"
@@ -219,9 +219,9 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
             <div className="flex items-center space-x-2">
               {task.status === 'ASSIGNED' && (
                 <button
-                  onClick={() => {
-                    onUpdateStatus(task.id, 'IN_PROGRESS');
-                    load();
+                  onClick={async () => {
+                    await onUpdateStatus(task.id, 'IN_PROGRESS');
+                    await load();
                   }}
                   className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
                 >
@@ -230,9 +230,9 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               )}
               {task.status !== 'COMPLETED' && (
                 <button
-                  onClick={() => {
-                    onUpdateStatus(task.id, 'COMPLETED');
-                    load();
+                  onClick={async () => {
+                    await onUpdateStatus(task.id, 'COMPLETED');
+                    await load();
                   }}
                   className="rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 transition"
                 >

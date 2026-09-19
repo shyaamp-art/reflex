@@ -1,6 +1,7 @@
 import { Router } from 'express';
-import { store } from '../db/store.js';
+import { store, uid } from '../db/store.js';
 import { EmployeeSkill } from '../../src/types/index.js';
+import { sendError } from '../http.js';
 
 export const employeesRouter = Router();
 
@@ -130,19 +131,33 @@ employeesRouter.put('/:id/skills', (req, res) => {
       return res.status(422).json({ error: { code: 'VALIDATION_ERROR', message: 'Each skill needs a name and valid proficiency.' } });
     }
 
-    emp.skills = skills.map((s: any, idx: number) => ({
-      id: s.id || `es-${emp.id}-${idx}`,
-      employee_id: emp.id,
-      skill_name: s.skill_name.trim().toLowerCase(),
-      proficiency: s.proficiency || 'INTERMEDIATE',
-      verified: s.verified !== undefined ? s.verified : true,
-    }));
+    emp.skills = mergeSkills(emp.id, skills);
 
     res.json({ skills: emp.skills });
   } catch (err: any) {
-    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
+    sendError(res, err);
   }
 });
+
+function mergeSkills(empId: string, skills: any[]) {
+  const levelOf = (p: string) => ({ BEGINNER: 1, INTERMEDIATE: 2, ADVANCED: 3, EXPERT: 4 } as Record<string, number>)[p] || 2;
+  const byName = new Map<string, any>();
+  skills.forEach((s: any, idx: number) => {
+    const key = s.skill_name.trim().toLowerCase();
+    const prev = byName.get(key);
+    // Duplicate skill rows keep the highest proficiency, not the last row.
+    if (!prev || levelOf(s.proficiency || 'INTERMEDIATE') > levelOf(prev.proficiency)) {
+      byName.set(key, {
+        id: s.id || `es-${empId}-${idx}`,
+        employee_id: empId,
+        skill_name: key,
+        proficiency: s.proficiency || 'INTERMEDIATE',
+        verified: s.verified !== undefined ? s.verified : true,
+      });
+    }
+  });
+  return [...byName.values()];
+}
 
 // =======================================================
 // Employee Personal Portal Routes
@@ -151,14 +166,14 @@ employeesRouter.put('/:id/skills', (req, res) => {
 // GET /api/employee/me/tasks
 employeesRouter.get('/me/tasks', (req, res) => {
   try {
-    const empId = (req.query.employee_id as string) || 'emp-1';
+    const empId = (req.body as any)?.employee_id || (req.query.employee_id as string) || 'emp-1';
     const emp = store.employees.find((e) => e.id === empId);
 
-    const activeAllocs = store.allocations.filter(
-      (a) => a.employee_id === empId && a.status === 'ACTIVE'
-    );
+    // Include historical (RELEASED) allocations so completed work remains
+    // visible in the employee portal's "Completed" tab.
+    const allAllocs = store.allocations.filter((a) => a.employee_id === empId);
 
-    const assignedTasks = activeAllocs
+    const assignedTasks = allAllocs
       .map((a) => {
         const task = store.getHydratedTask(a.task_id);
         return {
@@ -174,7 +189,7 @@ employeesRouter.get('/me/tasks', (req, res) => {
       total: assignedTasks.length,
     });
   } catch (err: any) {
-    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
+    sendError(res, err);
   }
 });
 
@@ -187,7 +202,35 @@ employeesRouter.patch('/me/tasks/:taskId/status', (req, res) => {
     }
 
     const { status, employee_name } = req.body;
+    const empId = (req.body as any)?.employee_id || (req.query.employee_id as string) || 'emp-1';
     const oldStatus = task.status;
+    // Same state machine as the manager route — no free-form statuses.
+    const validStatuses = ['UNASSIGNED', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'ON_HOLD'];
+    if (!validStatuses.includes(status)) {
+      return res.status(422).json({ error: { code: 'VALIDATION_ERROR', message: 'Invalid task status.' } });
+    }
+    const allowedTransitions: Record<string, string[]> = {
+      UNASSIGNED: ['ASSIGNED', 'ON_HOLD'],
+      ASSIGNED: ['IN_PROGRESS', 'COMPLETED', 'ON_HOLD'],
+      IN_PROGRESS: ['COMPLETED', 'ON_HOLD'],
+      ON_HOLD: ['ASSIGNED', 'IN_PROGRESS', 'COMPLETED'],
+      COMPLETED: [],
+    };
+    if (status !== oldStatus && !allowedTransitions[oldStatus]?.includes(status)) {
+      return res.status(409).json({ error: { code: 'CONFLICT', message: `Invalid task status transition from ${oldStatus} to ${status}.` } });
+    }
+    // Callers may only transition tasks they are actively assigned to
+    // (managers acting through the portal bypass this via /api/tasks).
+    const sessionUser = (req as any).sessionUser;
+    const isManagerPassthrough = sessionUser?.role === 'MANAGER';
+    if (!isManagerPassthrough) {
+      const assigned = store.allocations.some(
+        (a) => a.task_id === task.id && a.employee_id === empId && a.status === 'ACTIVE'
+      );
+      if (!assigned) {
+        return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Employees may only update tasks assigned to them.' } });
+      }
+    }
     task.status = status;
     task.updated_at = new Date().toISOString();
 
@@ -198,7 +241,7 @@ employeesRouter.patch('/me/tasks/:taskId/status', (req, res) => {
           alloc.released_at = task.updated_at;
 
           store.auditLogs.unshift({
-            id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            id: uid('log'),
             task_id: task.id,
             employee_id: alloc.employee_id,
             action: 'RELEASED',
@@ -218,20 +261,20 @@ employeesRouter.patch('/me/tasks/:taskId/status', (req, res) => {
     store.recalculateAllWorkloads();
     res.json({ task: store.getHydratedTask(task.id) });
   } catch (err: any) {
-    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
+    sendError(res, err);
   }
 });
 
 // GET /api/employee/me/availability
 employeesRouter.get('/me/availability', (req, res) => {
   try {
-    const empId = (req.query.employee_id as string) || 'emp-1';
+    const empId = (req.body as any)?.employee_id || (req.query.employee_id as string) || 'emp-1';
     const emp = store.employees.find((e) => e.id === empId);
     res.json({
       items: emp?.availability || [],
     });
   } catch (err: any) {
-    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
+    sendError(res, err);
   }
 });
 
@@ -265,20 +308,20 @@ employeesRouter.post('/me/availability', (req, res) => {
       events: result.events,
     });
   } catch (err: any) {
-    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
+    sendError(res, err);
   }
 });
 
 // DELETE /api/employee/me/availability/:id
 employeesRouter.delete('/me/availability/:id', (req, res) => {
   try {
-    const empId = (req.query.employee_id as string) || 'emp-1';
+    const empId = (req.body as any)?.employee_id || (req.query.employee_id as string) || 'emp-1';
     const emp = store.employees.find((e) => e.id === empId);
     if (emp && emp.availability) {
       emp.availability = emp.availability.filter((a) => a.id !== req.params.id);
     }
     res.status(204).send();
   } catch (err: any) {
-    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
+    sendError(res, err);
   }
 });

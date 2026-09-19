@@ -56,7 +56,8 @@ export const ManagerTasks: React.FC<ManagerTasksProps> = ({
 
     if (slaFilterOnly) {
       const diff = new Date(t.sla_deadline).getTime() - now;
-      if (t.status === 'COMPLETED' || diff <= 0 || diff > fourHoursMs) return false;
+      // Include breached (overdue) SLAs in the at-risk view.
+      if (t.status === 'COMPLETED' || diff > fourHoursMs) return false;
     }
 
     return true;
@@ -162,7 +163,7 @@ export const ManagerTasks: React.FC<ManagerTasksProps> = ({
               filteredTasks.map((task) => {
                 const diff = new Date(task.sla_deadline).getTime() - now;
                 const hoursLeft = Math.round(diff / (60 * 60 * 1000));
-                const isAtRisk = task.status !== 'COMPLETED' && diff > 0 && diff <= fourHoursMs;
+                const isAtRisk = task.status !== 'COMPLETED' && diff <= fourHoursMs;
                 const isOverdue = task.status !== 'COMPLETED' && diff <= 0;
 
                 return (

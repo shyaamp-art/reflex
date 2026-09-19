@@ -33,14 +33,23 @@ export const AiSuggestionDrawer: React.FC<AiSuggestionDrawerProps> = ({
 }) => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  // Initialize selection when result arrives
+  // Initialize selection when result arrives: prefer the server's selected
+  // plan (which covers the full required headcount), not just top-1.
   React.useEffect(() => {
     if (result?.suggestions) {
-      const topSelected = result.suggestions
+      const serverSelected = (result.selected || [])
+        .map((c) => c.employeeId)
+        .filter((id) => result.suggestions.some((s) => s.employeeId === id && s.eligible));
+      if (serverSelected.length > 0) {
+        setSelectedIds(serverSelected);
+        return;
+      }
+      const headcount = result.total_headcount_required || 1;
+      const topN = result.suggestions
         .filter((c) => c.eligible)
-        .slice(0, 1)
+        .slice(0, headcount)
         .map((c) => c.employeeId);
-      setSelectedIds(topSelected);
+      setSelectedIds(topN);
     }
   }, [result]);
 

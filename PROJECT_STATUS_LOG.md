@@ -8,6 +8,12 @@
 
 ### Follow-up implementation log
 
+- [x] Fixed manual assignment eligibility to recognize both `ACTIVE` and live-database `AVAILABLE` employee statuses, while preserving leave, workload, location, and required-skill hard constraints. Manual allocation errors now include the exact rejection reason.
+- [x] Confirmed the reported Python Advanced case: Marcus Vance has Python Advanced, but the live database also marks him unavailable from 2026-09-18 through 2026-09-21. Manual selection now visibly disables employees with an unavailable window instead of implying the skill is the problem.
+- [x] Removed manual allocation from new task creation. New tasks now go through AI candidate suggestions; manager reallocation review/override remains available for exception handling.
+- [x] Added an optional Python optimization sidecar under `optimizer/` implementing `all-MiniLM-L6-v2` cosine similarity, normalized weighted ranking, SciPy Hungarian assignment, and frequency/rarity skill-gap recommendations. The existing TypeScript engine remains the default to prevent runtime crashes when Python dependencies or the model are unavailable.
+- [x] Integrated the optimizer into the TypeScript allocator: task suggestions and reallocation proposals use Python scores and Hungarian selections when available; unaffected task allocations remain untouched by the existing impact-scoped event flow; skill-gap updates use Python rarity/frequency recommendations.
+- [x] Added process isolation, a 30-second timeout, JSON validation, and automatic TypeScript fallback for missing Python, missing model packages, model errors, or optimizer timeouts.
 - [x] Standardized profile images to two role-based avatars: one shared manager profile image and one shared employee profile image. Supabase hydration also normalizes existing database rows to these two images.
 - [x] Fixed employee login navigation so a successful employee authentication opens `my-dashboard` instead of leaving the manager-only `dashboard` tab selected.
 - [x] Replaced workspace selection login with username/password login. The API resolves the username to the linked user email and verifies the password through Supabase Auth, where only the hash is stored.

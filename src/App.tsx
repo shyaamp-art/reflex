@@ -150,11 +150,18 @@ export default function App() {
   const handleConfirmAiAllocation = async (selectedEmployeeIds: string[]) => {
     if (!pendingDraftTask) return;
     try {
-      await api.createTask({
-        ...pendingDraftTask,
-        allocation_mode: 'AI',
-        selected_employee_ids: selectedEmployeeIds,
-      });
+      // Existing tasks allocate in place; only brand-new drafts create a task.
+      if (pendingDraftTask.existingTaskId) {
+        await api.allocateExistingTask(pendingDraftTask.existingTaskId, selectedEmployeeIds, {
+          allocation_mode: 'AI',
+        });
+      } else {
+        await api.createTask({
+          ...pendingDraftTask,
+          allocation_mode: 'AI',
+          selected_employee_ids: selectedEmployeeIds,
+        });
+      }
       setIsAiSuggestionOpen(false);
       setPendingDraftTask(null);
       setAiSuggestionResult(null);
@@ -162,21 +169,6 @@ export default function App() {
       setCurrentTab('tasks');
     } catch (err: any) {
       alert(err.message || 'Error creating task with allocations');
-    }
-  };
-
-  const handleDirectCreateTask = async (formData: any) => {
-    try {
-      await api.createTask({
-        ...formData,
-        allocation_mode: 'MANUAL',
-        selected_employee_ids: formData.selected_employee_ids || [],
-      });
-      setIsNewTaskOpen(false);
-      refreshAllData();
-      setCurrentTab('tasks');
-    } catch (err: any) {
-      alert(err.message || 'Error creating task');
     }
   };
 
@@ -207,7 +199,7 @@ export default function App() {
       await api.updateTaskStatus(taskId, status, currentUser?.name);
       refreshAllData();
     } catch (err: any) {
-      console.error(err);
+      alert(err.message || 'Error updating task status');
     }
   };
 
@@ -216,7 +208,7 @@ export default function App() {
       await api.deleteTask(taskId);
       refreshAllData();
     } catch (err: any) {
-      console.error(err);
+      alert(err.message || 'Error deleting task');
     }
   };
 
@@ -225,12 +217,13 @@ export default function App() {
       await api.releaseAllocation(taskId, allocationId);
       refreshAllData();
     } catch (err: any) {
-      console.error(err);
+      alert(err.message || 'Error releasing allocation');
     }
   };
 
   const handleRequestSuggestionsForExistingTask = async (task: Task) => {
     const payload = {
+      existingTaskId: task.id,
       title: task.title,
       description: task.description,
       priority: task.priority,
@@ -257,12 +250,13 @@ export default function App() {
     return <LoginPage onLogin={handleLogin} />;
   }
 
-  // SLA At-Risk count
-  const fourHoursMs = 4 * 60 * 60 * 1000;
+  // SLA At-Risk count — uses the configurable lookahead and includes breached.
+  const lookaheadHours = settings?.sla_lookahead_hours || 4;
+  const lookaheadMs = lookaheadHours * 60 * 60 * 1000;
   const now = Date.now();
   const atRiskCount = tasks.filter((t) => {
     const diff = new Date(t.sla_deadline).getTime() - now;
-    return t.status !== 'COMPLETED' && diff > 0 && diff <= fourHoursMs;
+    return t.status !== 'COMPLETED' && diff <= lookaheadMs;
   }).length;
 
   const pendingReallocationsCount = reallocations.filter((p) => p.status === 'PENDING').length;
@@ -382,9 +376,7 @@ export default function App() {
         isOpen={isNewTaskOpen}
         onClose={() => setIsNewTaskOpen(false)}
         onAnalyzeSuggestions={handleAnalyzeTaskSuggestions}
-        onSubmitDirect={handleDirectCreateTask}
         availableSkills={skills}
-        employees={employees}
       />
 
       <AiSuggestionDrawer

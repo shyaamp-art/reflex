@@ -210,7 +210,11 @@ export interface UserSession {
 
 export interface AllocationSuggestionResult {
   suggestions: CandidateScore[];
+  selected?: CandidateScore[];
   eligible_count: number;
+  status?: string;
+  total_headcount_required?: number;
+  total_headcount_filled?: number;
   generated_at: string;
   uncovered_requirements?: {
     skill_name: string;

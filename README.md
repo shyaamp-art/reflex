@@ -78,7 +78,7 @@ mode.
 Eligible candidates are ranked with this weighted composite score:
 
 | Factor | Weight | Purpose |
-| --- | ---: | --- |
+| ---| ---: | --- |
 | Skill match | 35% | Compare required and available proficiency |
 | Availability | 15% | Account for leave and projected completion horizon |
 | Workload | 20% | Prefer capacity while enforcing the workload ceiling |
@@ -178,6 +178,7 @@ Create a `.env` file when using Supabase or Gemini. The important settings are:
 REFLEX_PERSISTENCE=dummy
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_PUBLISHABLE_KEY=
 GEMINI_API_KEY=
 ```
 

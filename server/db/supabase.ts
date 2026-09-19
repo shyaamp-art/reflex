@@ -2,9 +2,11 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 export type PersistenceMode = 'dummy' | 'supabase';
 
-const mode: PersistenceMode = process.env.REFLEX_PERSISTENCE === 'supabase' ? 'supabase' : 'dummy';
 const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const mode: PersistenceMode =
+  process.env.REFLEX_PERSISTENCE === 'dummy' ? 'dummy' :
+  process.env.REFLEX_PERSISTENCE === 'supabase' || (url && serviceRoleKey) ? 'supabase' : 'dummy';
 
 export interface SupabaseConnector {
   readonly mode: PersistenceMode;

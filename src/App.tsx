@@ -129,6 +129,32 @@ export default function App() {
     }
   };
 
+  // Revalidate the session when the server rejects with 401/403: the screen
+  // can show a cached manager console while the cookie is gone or belongs to
+  // an employee (e.g. signed in elsewhere). Reconciling drops back to the
+  // correct portal/login instead of leaving a stale UI behind cryptic alerts.
+  const reconcileSessionAfterAuthFailure = useCallback(async () => {
+    try {
+      const meRes = await api.getMe();
+      setCurrentUser((prev) =>
+        prev?.authUserId === meRes.user.authUserId && prev?.role === meRes.user.role ? prev : meRes.user
+      );
+    } catch {
+      setCurrentUser(null);
+    }
+  }, []);
+
+  const handleMutationError = useCallback(
+    async (err: any, fallbackMessage: string) => {
+      const status = (err as any)?.status;
+      if (status === 401 || status === 403) {
+        await reconcileSessionAfterAuthFailure();
+      }
+      alert(err?.message || fallbackMessage);
+    },
+    [reconcileSessionAfterAuthFailure]
+  );
+
   // Task Creation & AI Suggestion Flow
   const handleAnalyzeTaskSuggestions = async (formData: any) => {
     try {
@@ -140,7 +166,7 @@ export default function App() {
       const result = await api.getAllocationSuggestions(formData);
       setAiSuggestionResult(result);
     } catch (err: any) {
-      alert(err.message || 'Error running AI allocation suggestions');
+      await handleMutationError(err, 'Error running AI allocation suggestions');
       setIsAiSuggestionOpen(false);
     } finally {
       setIsAiLoading(false);
@@ -168,7 +194,7 @@ export default function App() {
       refreshAllData();
       setCurrentTab('tasks');
     } catch (err: any) {
-      alert(err.message || 'Error creating task with allocations');
+      await handleMutationError(err, 'Error creating task with allocations');
     }
   };
 
@@ -179,7 +205,7 @@ export default function App() {
       setActiveReallocationProposal(null);
       refreshAllData();
     } catch (err: any) {
-      alert(err.message || 'Error approving reallocation');
+      await handleMutationError(err, 'Error approving reallocation');
     }
   };
 
@@ -189,7 +215,7 @@ export default function App() {
       setActiveReallocationProposal(null);
       refreshAllData();
     } catch (err: any) {
-      alert(err.message || 'Error committing manual override');
+      await handleMutationError(err, 'Error committing manual override');
     }
   };
 
@@ -199,7 +225,7 @@ export default function App() {
       await api.updateTaskStatus(taskId, status, currentUser?.name);
       refreshAllData();
     } catch (err: any) {
-      alert(err.message || 'Error updating task status');
+      await handleMutationError(err, 'Error updating task status');
     }
   };
 
@@ -208,7 +234,7 @@ export default function App() {
       await api.deleteTask(taskId);
       refreshAllData();
     } catch (err: any) {
-      alert(err.message || 'Error deleting task');
+      await handleMutationError(err, 'Error deleting task');
     }
   };
 
@@ -217,7 +243,7 @@ export default function App() {
       await api.releaseAllocation(taskId, allocationId);
       refreshAllData();
     } catch (err: any) {
-      alert(err.message || 'Error releasing allocation');
+      await handleMutationError(err, 'Error releasing allocation');
     }
   };
 

@@ -33,7 +33,15 @@ export function createApp() {
   };
   const currentUser = (req: express.Request) => {
     const authUserId = readAuthUserId(req);
-    return store.users.find((user) => user.authUserId === authUserId) || store.users[0];
+    const sessionUser = authUserId
+      ? store.users.find((user) => user.authUserId === authUserId)
+      : undefined;
+    // Deterministic demo fallback: Supabase returns rows in arbitrary order,
+    // so users[0] is often an employee and cookieless requests randomly 403.
+    // Fall back to the manager account (dummy-mode tests and the demo console
+    // rely on manager access without a session cookie). This remains a demo
+    // convenience, not a production authorization boundary.
+    return sessionUser || store.users.find((user) => user.role === 'MANAGER') || store.users[0];
   };
   const setAuthCookie = (res: express.Response, authUserId: string) => {
     const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';

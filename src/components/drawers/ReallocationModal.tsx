@@ -38,7 +38,13 @@ export const ReallocationModal: React.FC<ReallocationModalProps> = ({
   if (!isOpen || !proposal) return null;
 
   const selectedItems = (proposal.items || []).filter((it) => it.selected);
-  const topItem = selectedItems[0] || proposal.items?.[0];
+  // Only PENDING proposals with recommended candidates can be approved.
+  // NO_FEASIBLE_MATCH (or decided) proposals must go through an eligible
+  // manual override or capacity relief — approving them always failed server
+  // side, which made the whole flow look broken.
+  const isActionable = proposal.status === 'PENDING' && selectedItems.length > 0;
+  // Never present a rejected candidate as the "recommended target".
+  const topItem = selectedItems[0];
   const topItemEmployee = topItem?.employee;
   const topCandidate = proposal.candidates?.[0] || (topItem
     ? {
@@ -61,7 +67,20 @@ export const ReallocationModal: React.FC<ReallocationModalProps> = ({
   const currentAssignee = proposal.current_allocations?.[0]?.employee;
   const task = proposal.task;
 
+  // Ranked candidates with eligibility annotations. Proposal items carry the
+  // engine rejection reason for ineligible staff; employees outside the
+  // evaluated top-5 are selectable and validated server side.
+  const rankedOptions = employees.map((emp) => {
+    const item = (proposal.items || []).find((it) => it.employee_id === emp.id);
+    const rawReason = item?.reason || '';
+    const ineligibleReason = rawReason.startsWith('Ineligible')
+      ? rawReason.replace(/^Ineligible:\s*/, '')
+      : null;
+    return { emp, item, ineligibleReason };
+  });
+
   const handleConfirmApprove = () => {
+    if (!isActionable) return;
     onApprove(proposal.id, decisionNote || 'AI Reallocation proposal approved by manager.');
   };
 
@@ -171,6 +190,25 @@ export const ReallocationModal: React.FC<ReallocationModalProps> = ({
             </div>
           </div>
 
+          {/* Non-actionable notice: explains why Approve is disabled */}
+          {!isActionable && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-900 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold">
+                  {proposal.status !== 'PENDING'
+                    ? `Proposal already ${proposal.status.toLowerCase()} — no further approval possible.`
+                    : 'No feasible replacement found under current hard constraints.'}
+                </p>
+                <p className="mt-1 text-amber-800">
+                  Free capacity (release or complete another task for a skilled engineer), wait for leave to end,
+                  or pick an eligible engineer below via Manual Override. Approval is disabled until candidates
+                  satisfy skill, availability, workload (&le;100%), and work-mode rules.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Gemini Rationale */}
           {topCandidate && (
             <div className="rounded-xl border border-indigo-100 bg-slate-50 p-3.5 text-xs">
@@ -210,6 +248,42 @@ export const ReallocationModal: React.FC<ReallocationModalProps> = ({
             </div>
           )}
 
+          {/* Full ranked evaluation so managers see why others were rejected */}
+          {(proposal.items || []).length > 0 && (
+            <div className="rounded-xl border border-slate-200 bg-white p-3.5 text-xs">
+              <span className="font-bold text-slate-700 block uppercase tracking-wider mb-2">
+                Candidate Evaluation ({(proposal.items || []).filter((it) => it.selected).length} recommended)
+              </span>
+              <div className="space-y-1.5">
+                {(proposal.items || []).map((it) => {
+                  const name = (it as any)?.employee?.name || it.employee_id;
+                  const bad = (it.reason || '').startsWith('Ineligible');
+                  return (
+                    <div
+                      key={it.id}
+                      className={`rounded-lg border px-2.5 py-1.5 flex items-center justify-between gap-2 ${
+                        it.selected ? 'border-indigo-300 bg-indigo-50/60' : 'border-slate-150 bg-slate-50'
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <span className="font-bold text-slate-900">{name}</span>
+                        {it.selected && (
+                          <span className="ml-1.5 rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                            RECOMMENDED
+                          </span>
+                        )}
+                        <p className={`truncate text-[11px] ${bad ? 'text-rose-700' : 'text-slate-500'}`}>
+                          {it.reason}
+                        </p>
+                      </div>
+                      <span className="shrink-0 font-bold text-slate-800">{it.score.toFixed(1)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Override Form Toggle */}
           {isOverriding ? (
             <form onSubmit={handleConfirmOverride} className="rounded-xl border border-amber-200 bg-amber-50/50 p-4 space-y-3">
@@ -237,12 +311,24 @@ export const ReallocationModal: React.FC<ReallocationModalProps> = ({
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs outline-none"
                 >
                   <option value="">Select an engineer...</option>
-                  {employees.map((emp) => (
-                    <option key={emp.id} value={emp.id}>
+                  {rankedOptions.map(({ emp, item, ineligibleReason }) => (
+                    <option key={emp.id} value={emp.id} disabled={!!ineligibleReason}>
                       {emp.name} &bull; {emp.role_title} ({emp.current_workload_percent}% load)
+                      {item
+                        ? ineligibleReason
+                          ? ` — INELIGIBLE: ${ineligibleReason}`
+                          : ` — eligible (${item.score.toFixed(1)})`
+                        : ' — not evaluated'}
                     </option>
                   ))}
                 </select>
+                {rankedOptions.some((o) => o.item) &&
+                  !rankedOptions.some((o) => o.item && !o.ineligibleReason) && (
+                    <p className="mt-1.5 text-[11px] text-amber-800 flex items-center gap-1">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      No evaluated engineer currently satisfies the hard constraints. Free capacity first, then retry.
+                    </p>
+                  )}
               </div>
 
               <div>
@@ -307,9 +393,10 @@ export const ReallocationModal: React.FC<ReallocationModalProps> = ({
             {!isOverriding && (
               <button
                 type="button"
-                disabled={!topCandidate}
+                disabled={!isActionable}
                 onClick={handleConfirmApprove}
-                className="flex items-center space-x-1.5 rounded-xl bg-indigo-600 px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-indigo-700 transition active:scale-95 disabled:opacity-50"
+                title={isActionable ? 'Approve the recommended transfer' : 'Approval requires a PENDING proposal with a recommended candidate'}
+                className="flex items-center space-x-1.5 rounded-xl bg-indigo-600 px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-indigo-700 transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <CheckCircle2 className="h-4 w-4" />
                 <span>Approve AI Reallocation</span>

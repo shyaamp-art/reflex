@@ -4,7 +4,48 @@
 **Project:** Reflex — AI Workforce Decision & Resource Allocation Agent  
 **Current backend mode:** Supabase-connected simplified schema  
 
+### Manager-console 403 fix (`Manager role is required` on AI suggestions)
+
+Symptom (screenshot): signed-in-looking manager console, but the AI Recommendation drawer
+failed with `Manager role is required for this operation.`
+Reproduced in Supabase mode: any request without a valid session cookie fell back to
+`store.users[0]`, which is a random employee (David Chen) because Supabase returns rows in
+arbitrary order — so the suggestions POST 403'd while React kept showing the cached
+manager screen (data-load failures only `console.error`, never revalidate the session).
+
+- [x] `server/app.ts`: session fallback is now deterministic — valid cookie session, else the manager account, else `users[0]`. Cookieless demo/test behavior is identical in dummy and Supabase modes; valid employee sessions are still restricted (403 on manager routes).
+- [x] `src/App.tsx`: all manager mutation error paths now revalidate the session (`GET /api/me`) on 401/403 before alerting, so a lost/employee cookie drops back to the correct portal/login instead of stranding a stale manager console.
+- [x] Verified: `npm run lint`, `npm run test:backend`, `npm run build`, plus Supabase-mode auth probe (no-cookie → manager 200, manager cookie → 200, employee cookie → 403 on manager routes).
+- [ ] Follow-up (pre-existing, Phase 4): background Supabase writes fail RLS (`row-level security policy` on `users`/`events`/`allocations`/`agent_settings`), so mutations may not survive restarts until RLS policies land. In-memory flows are unaffected.
+
 ## Requested change log — 2026-09-19
+
+### Reassignment reliability fix
+
+Root cause (verified against the live Supabase data): Vikram Malhotra's leave generated
+two `NO_FEASIBLE_MATCH` proposals (Stripe backup Maya Lin projected at 110–120% workload;
+all other engineers missing Stripe; Marcus Vance on a now-deleted leave window). Those
+proposals could never be approved (no selected candidates) nor overridden (status gate +
+generic `Override includes an ineligible employee` error), while the UI still enabled
+**Approve** and listed every engineer as override-eligible — so every click failed and the
+flow looked completely broken. Stale proposals were also never recomputed.
+
+- [x] Refresh open (`PENDING`/`NO_FEASIBLE_MATCH`) proposals in place on every new leave, release, or SLA trigger instead of stacking duplicates or serving stale candidates. Decided proposals are never touched.
+- [x] Allow manager override on `NO_FEASIBLE_MATCH` proposals with strict live eligibility revalidation, so freeing capacity (completing/releasing a task) unblocks the transfer without a new trigger event.
+- [x] Override errors now name each ineligible employee with exact rejection reasons (skill, workload, availability, work mode); duplicate employee IDs return `409`.
+- [x] Approve/override retain already-active holders instead of releasing and recreating every allocation (verified: healthy holder's allocation id preserved on multi-person approval).
+- [x] Proposal scoring now uses real store allocations for SLA safety (raw tasks carry no embedded allocations, so the old derivation was always empty) plus the configured SLA lookahead.
+- [x] `uncoveredSkills`/skill gaps only track `MUST_HAVE` shortfalls; `NICE_TO_HAVE` gaps no longer dead-end proposals or pollute hiring signals (`uncoveredRequirements` now carries `requirement_type`).
+- [x] Review modal: **Approve** disabled unless the proposal is `PENDING` with recommended candidates (with a plain-language explanation), full ranked candidate list with rejection reasons, and the override dropdown disables ineligible engineers with their exact cause.
+- [x] Reallocations hub no longer presents a rejected candidate as the transfer target for no-match proposals.
+- [x] Added missing Marcus Vance / Aisha Morales demo users to the dummy-mode seed (all six employees can now sign in offline).
+- [x] Verified: `npm run lint`, `npm run test:backend`, `npm run build`, plus HTTP end-to-end (leave → proposal → approve/override → release, auth guards) and a saturated-workload scenario (no-match → detailed errors → free capacity → override recovery).
+
+Live-data note: the two existing `NO_FEASIBLE_MATCH` proposals for `task-1` and the
+`distributed systems` task are genuinely infeasible under current workloads (Maya Lin at
+80% cannot absorb 12–16h more). With this fix the UI now says exactly that and offers the
+working path: complete/release one of Maya's other tasks (or wait out leave), then approve
+the refreshed proposal or override directly.
 
 ### Follow-up implementation log
 

@@ -15,6 +15,15 @@ export function createApp() {
   let currentSessionIndex = 0;
 
   app.use(express.json());
+
+  const currentUser = () => store.users[currentSessionIndex] || store.users[0];
+  const deny = (res: express.Response, message: string) =>
+    res.status(403).json({ error: { code: 'FORBIDDEN', message } });
+  const requireManager = (_req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (currentUser()?.role !== 'MANAGER') return deny(res, 'Manager role is required for this operation.');
+    next();
+  };
+
   // Hydrate before every request's route handler and flush mutations after the
   // response. Dummy mode returns immediately, so offline tests never contact
   // Supabase.
@@ -31,37 +40,42 @@ export function createApp() {
       res.status(503).json({
         error: { code: 'PERSISTENCE_UNAVAILABLE', message: error instanceof Error ? error.message : 'Supabase unavailable' },
       });
-
-      const currentUser = () => store.users[currentSessionIndex] || store.users[0];
-      const deny = (res: express.Response, message: string) =>
-        res.status(403).json({ error: { code: 'FORBIDDEN', message } });
-      const requireManager = (_req: express.Request, res: express.Response, next: express.NextFunction) => {
-        if (currentUser()?.role !== 'MANAGER') return deny(res, 'Manager role is required for this operation.');
-        next();
-      };
-
-      // Temporary compatibility guard until Supabase JWT middleware is enabled.
-      app.use('/api/tasks', requireManager);
-      app.use('/api/reallocations', requireManager);
-      app.use('/api/settings', (req, res, next) => {
-        if (req.method === 'GET' || currentUser()?.role === 'MANAGER') return next();
-        return deny(res, 'Manager role is required for this operation.');
-      });
-      app.use('/api/employees', (req, res, next) => {
-        const user = currentUser();
-        if (user?.role === 'MANAGER') return next();
-        if (req.method === 'GET' && req.path === `/${user?.employeeId}`) return next();
-        return deny(res, 'Only managers may access workforce records.');
-      });
-      app.use('/api/employee', (req, res, next) => {
-        const user = currentUser();
-        if (user?.role !== 'EMPLOYEE') return deny(res, 'Employee role is required for this operation.');
-        const requestedId = typeof req.query.employee_id === 'string' ? req.query.employee_id : req.body?.employee_id;
-        if (requestedId && requestedId !== user.employeeId) return deny(res, 'Employees may only access their own records.');
-        if (req.body && user.employeeId) req.body.employee_id = user.employeeId;
-        next();
-      });
     }
+  });
+
+  // RBAC guards — registered at startup, evaluated per request before routers.
+  // Temporary compatibility guard until Supabase JWT middleware is enabled.
+  // NOTE: /api/employee/me/* uses query/body employee_id; the guard below
+  // forces it to the session employee so callers cannot impersonate others.
+  app.use('/api/tasks', requireManager);
+  app.use('/api/reallocations', requireManager);
+  app.use('/api/settings', (req, res, next) => {
+    if (req.method === 'GET' || currentUser()?.role === 'MANAGER') return next();
+    return deny(res, 'Manager role is required for this operation.');
+  });
+  // Mounted twice (/api/employees and /api/employee share a router). Guard by
+  // full original URL so /api/employee/me/* is treated as the employee portal.
+  app.use('/api/employees', (req, res, next) => {
+    const user = currentUser();
+    if (user?.role === 'MANAGER') return next();
+    if (req.method === 'GET' && req.path === `/${user?.employeeId}`) return next();
+    return deny(res, 'Only managers may access workforce records.');
+  });
+  app.use('/api/employee', (req, res, next) => {
+    const user = currentUser();
+    // Managers may act through the portal in dummy/test mode; employees are
+    // restricted to their own records.
+    if (user?.role === 'MANAGER') {
+      (req as any).sessionUser = user;
+      return next();
+    }
+    if (user?.role !== 'EMPLOYEE') return deny(res, 'Employee role is required for this operation.');
+    const requestedId = typeof req.query.employee_id === 'string' ? req.query.employee_id : req.body?.employee_id;
+    if (requestedId && requestedId !== user.employeeId) return deny(res, 'Employees may only access their own records.');
+    if (req.body && user.employeeId) req.body.employee_id = user.employeeId;
+    if (req.query && user.employeeId && !req.query.employee_id) req.query.employee_id = user.employeeId;
+    (req as any).sessionUser = user;
+    next();
   });
 
   app.get('/api/health', (_req, res) => {

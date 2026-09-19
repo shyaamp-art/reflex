@@ -37,7 +37,27 @@ export const ReallocationModal: React.FC<ReallocationModalProps> = ({
 
   if (!isOpen || !proposal) return null;
 
-  const topCandidate = proposal.candidates?.[0];
+  const selectedItems = (proposal.items || []).filter((it) => it.selected);
+  const topItem = selectedItems[0] || proposal.items?.[0];
+  const topItemEmployee = topItem?.employee;
+  const topCandidate = proposal.candidates?.[0] || (topItem
+    ? {
+        employeeName: topItemEmployee?.name || topItem.employee_id,
+        roleTitle: topItemEmployee?.role_title || '',
+        score: topItem.score,
+        projectedWorkload: topItemEmployee?.current_workload_percent || 0,
+        reason: topItem.reason,
+        breakdown: {
+          skillMatch: topItem.skill_match,
+          availability: topItem.availability,
+          workload: topItem.workload,
+          performance: topItem.performance,
+          slaSafety: topItem.sla_safety,
+          location: topItem.location,
+        },
+      }
+    : undefined);
+  const triggerLabel = proposal.trigger_type || proposal.event?.type || proposal.proposal_type;
   const currentAssignee = proposal.current_allocations?.[0]?.employee;
   const task = proposal.task;
 
@@ -65,11 +85,11 @@ export const ReallocationModal: React.FC<ReallocationModalProps> = ({
               <div className="flex items-center space-x-2">
                 <h2 className="text-base font-bold text-slate-900">Reallocation Proposal Review</h2>
                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                  proposal.trigger_type === 'PERSON_UNAVAILABLE'
-                    ? 'bg-rose-100 text-rose-800'
-                    : 'bg-amber-100 text-amber-800'
-                }`}>
-                  {proposal.trigger_type}
+                   triggerLabel === 'PERSON_UNAVAILABLE'
+                     ? 'bg-rose-100 text-rose-800'
+                     : 'bg-amber-100 text-amber-800'
+                 }`}>
+                   {triggerLabel}
                 </span>
               </div>
               <p className="text-xs text-slate-500">Proposal ID: {proposal.id}</p>
@@ -113,7 +133,7 @@ export const ReallocationModal: React.FC<ReallocationModalProps> = ({
                   <p className="font-bold text-slate-900">{currentAssignee?.name || 'Unassigned / Released'}</p>
                   <p className="text-[11px] text-slate-500">{currentAssignee?.role_title || 'N/A'}</p>
                   <p className="text-[10px] text-rose-700 font-semibold mt-1">
-                    Trigger: {proposal.trigger_type?.replace('_', ' ') || 'SYSTEM EVENT'}
+                    Trigger: {triggerLabel?.replace('_', ' ') || 'SYSTEM EVENT'}
                   </p>
                 </div>
               </div>

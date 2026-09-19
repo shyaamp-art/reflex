@@ -21,8 +21,8 @@ export function sendError(res: Response, error: unknown): void {
     return;
   }
   const message = error instanceof Error ? error.message : 'Unexpected server error';
-  const status = /not found/i.test(message) ? 404 : /already|pending state|inactive|duplicate/i.test(message) ? 409 : 500;
-  res.status(status).json({ error: { code: status === 404 ? 'NOT_FOUND' : status === 409 ? 'CONFLICT' : 'INTERNAL_ERROR', message } });
+  const status = /not found/i.test(message) ? 404 : /already|pending state|inactive|duplicate|stale/i.test(message) ? 409 : /validation|required|invalid|exceed|ineligible|no feasible|must_have|hard constraints/i.test(message) ? 422 : 500;
+  res.status(status).json({ error: { code: status === 404 ? 'NOT_FOUND' : status === 409 ? 'CONFLICT' : status === 422 ? 'VALIDATION_ERROR' : 'INTERNAL_ERROR', message } });
 }
 
 export function stringValue(value: unknown, field: string, required = true): string | undefined {

@@ -66,7 +66,18 @@ export const ManagerReallocations: React.FC<ManagerReallocationsProps> = ({
       ) : (
         <div className="space-y-4">
           {filtered.map((prop) => {
-            const top = prop.candidates?.[0];
+            const selectedItems = (prop.items || []).filter((it) => it.selected);
+            const topItem = selectedItems[0] || prop.items?.[0];
+            const topItemEmployee = (topItem as any)?.employee;
+            const top = prop.candidates?.[0] || (topItem
+              ? {
+                  employeeName: topItemEmployee?.name || (topItem as any).employee_id,
+                  roleTitle: topItemEmployee?.role_title || '',
+                  score: (topItem as any).score || 0,
+                  projectedWorkload: topItemEmployee?.current_workload_percent,
+                }
+              : undefined);
+            const triggerLabel = (prop as any).trigger_type || prop.event?.type || prop.proposal_type;
             const currentAlloc = prop.current_allocations?.[0];
             const isPending = prop.status === 'PENDING';
 
@@ -84,12 +95,12 @@ export const ManagerReallocations: React.FC<ManagerReallocationsProps> = ({
                   <div className="flex items-center space-x-2.5">
                     <span
                       className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold ${
-                        prop.trigger_type === 'PERSON_UNAVAILABLE'
+                        triggerLabel === 'PERSON_UNAVAILABLE'
                           ? 'bg-rose-100 text-rose-800 border border-rose-200/60'
                           : 'bg-amber-100 text-amber-800 border border-amber-200/60'
                       }`}
                     >
-                      {prop.trigger_type === 'PERSON_UNAVAILABLE' ? 'UNAVAILABILITY LEAVE' : 'SLA RISK ESCALATION'}
+                      {triggerLabel === 'PERSON_UNAVAILABLE' ? 'UNAVAILABILITY LEAVE' : 'SLA RISK ESCALATION'}
                     </span>
                     <span className="text-xs font-bold text-slate-800">Proposal #{prop.id.slice(-6)}</span>
                     <span className="text-[10px] text-slate-400">

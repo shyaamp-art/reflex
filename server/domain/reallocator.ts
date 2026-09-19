@@ -62,7 +62,7 @@ export function generateReallocationProposal(context: ReallocationContext): {
   const proposalItems: AllocationProposalItem[] = plan.rankedCandidates.slice(0, 5).map((candidate, idx) => {
     const isSelected = plan.selected.some((s) => s.employeeId === candidate.employeeId);
     return {
-      id: `prop-item-${Date.now()}-${idx}`,
+      id: `prop-item-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 8)}`,
       proposal_id: '',
       employee_id: candidate.employeeId,
       rank: idx + 1,
@@ -99,11 +99,13 @@ export function generateReallocationProposal(context: ReallocationContext): {
     proposal: {
       task_id: affectedTask.id,
       event_id: event.id,
+      trigger_type: event.type,
       proposal_type: proposalType,
       status: plan.status === 'READY' ? 'PENDING' : 'NO_FEASIBLE_MATCH',
       summary,
       explanation,
       items: proposalItems,
+      candidates: plan.selected,
     },
     uncoveredSkills,
   };

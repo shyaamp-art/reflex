@@ -21,15 +21,17 @@ export interface ScoringContext {
   employee: Employee;
   now?: Date;
   activeTasksForEmployee?: Pick<Task, 'id' | 'sla_deadline' | 'priority'>[];
+  slaLookaheadHours?: number;
 }
 
 export function calculateCandidateScore(context: ScoringContext): CandidateScore {
-  const { task, requirements, employee, now = new Date(), activeTasksForEmployee = [] } = context;
+  const { task, requirements, employee, now = new Date(), activeTasksForEmployee = [], slaLookaheadHours = 4 } = context;
   const rejectionReasons: string[] = [];
 
-  // Hard Rule 1: Employee status must be ACTIVE
-  if (employee.status !== 'ACTIVE') {
-    rejectionReasons.push('Employee status is INACTIVE');
+  // ACTIVE and AVAILABLE both represent employees who can receive work. The
+  // latter is used by the live database for current availability state.
+  if (employee.status !== 'ACTIVE' && employee.status !== 'AVAILABLE') {
+    rejectionReasons.push('Employee status is inactive');
   }
 
   // Hard Rule 2: Work Mode Compatibility
@@ -115,22 +117,37 @@ export function calculateCandidateScore(context: ScoringContext): CandidateScore
 
   const empSkillsMap = new Map<string, number>();
   for (const s of employee.skills || []) {
-    empSkillsMap.set(s.skill_name.trim().toLowerCase(), PROFICIENCY_LEVELS[s.proficiency] || 1);
+    const key = s.skill_name.trim().toLowerCase();
+    // Duplicate skill rows keep the highest proficiency, not the last row.
+    empSkillsMap.set(key, Math.max(empSkillsMap.get(key) || 0, PROFICIENCY_LEVELS[s.proficiency] || 1));
   }
 
+  // Duplicate task requirements are merged (highest proficiency, MUST_HAVE
+  // wins) so they are not double-weighted in the skill score.
+  const dedupedReqs = new Map<string, { name: string; level: number; isMustHave: boolean }>();
   for (const req of requirements) {
-    const reqName = req.skill_name.trim().toLowerCase();
-    const reqProfVal = PROFICIENCY_LEVELS[req.proficiency] || 1;
-    const isMustHave = req.requirement_type === 'MUST_HAVE';
+    const key = req.skill_name.trim().toLowerCase();
+    const level = PROFICIENCY_LEVELS[req.proficiency] || 1;
+    const prev = dedupedReqs.get(key);
+    dedupedReqs.set(key, {
+      name: req.skill_name,
+      level: Math.max(prev?.level || 0, level),
+      isMustHave: (prev?.isMustHave || false) || req.requirement_type === 'MUST_HAVE',
+    });
+  }
+
+  for (const req of dedupedReqs.values()) {
+    const reqProfVal = req.level;
+    const isMustHave = req.isMustHave;
     const weight = isMustHave ? 1.0 : 0.5;
     totalSkillWeights += weight;
 
-    const actualProfVal = empSkillsMap.get(reqName) || 0;
+    const actualProfVal = empSkillsMap.get(req.name.trim().toLowerCase()) || 0;
 
     if (actualProfVal < reqProfVal) {
       if (isMustHave) {
         rejectionReasons.push(
-          `Missing required MUST_HAVE skill: ${req.skill_name} (${req.proficiency} required, found ${actualProfVal === 0 ? 'None' : Object.keys(PROFICIENCY_LEVELS).find(k => PROFICIENCY_LEVELS[k as Proficiency] === actualProfVal)})`
+          `Missing required MUST_HAVE skill: ${req.name} (${Object.keys(PROFICIENCY_LEVELS).find(k => PROFICIENCY_LEVELS[k as Proficiency] === reqProfVal) || reqProfVal} required, found ${actualProfVal === 0 ? 'None' : Object.keys(PROFICIENCY_LEVELS).find(k => PROFICIENCY_LEVELS[k as Proficiency] === actualProfVal)})`
         );
       }
       const matchRatio = reqProfVal > 0 ? actualProfVal / reqProfVal : 0;
@@ -147,21 +164,21 @@ export function calculateCandidateScore(context: ScoringContext): CandidateScore
 
   // Factor 5: SLA Safety
   // Start at 100
-  // Subtract 25 for each active task assigned to employee with deadline within 4 hours
-  // Subtract 30 if new task is due within 4 hours and projected workload > 90%
+  // Subtract 25 for each active task assigned to employee with deadline within the lookahead
+  // Subtract 30 if new task is due within the lookahead and projected workload > 90%
   let slaSafetyScore = 100;
-  const fourHoursMs = 4 * 60 * 60 * 1000;
+  const lookaheadMs = slaLookaheadHours * 60 * 60 * 1000;
   const nowMs = now.getTime();
 
   for (const actTask of activeTasksForEmployee) {
     const deadlineMs = new Date(actTask.sla_deadline).getTime();
-    if (deadlineMs - nowMs > 0 && deadlineMs - nowMs <= fourHoursMs) {
+    if (deadlineMs - nowMs > 0 && deadlineMs - nowMs <= lookaheadMs) {
       slaSafetyScore -= 25;
     }
   }
 
   const newTaskDeadlineMs = new Date(task.sla_deadline).getTime();
-  if (newTaskDeadlineMs - nowMs > 0 && newTaskDeadlineMs - nowMs <= fourHoursMs && projectedWorkload > 90) {
+  if (newTaskDeadlineMs - nowMs > 0 && newTaskDeadlineMs - nowMs <= lookaheadMs && projectedWorkload > 90) {
     slaSafetyScore -= 30;
   }
   slaSafetyScore = Math.max(0, Math.min(100, slaSafetyScore));

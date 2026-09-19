@@ -95,6 +95,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  allocateExistingTask: (taskId: string, employeeIds: string[], opts?: { allocation_mode?: string; reason?: string }) =>
+    request<{ task: Task; allocations: any[]; audit_log_id?: string }>(`/api/tasks/${taskId}/allocations`, {
+      method: 'POST',
+      body: JSON.stringify({ employee_ids: employeeIds, allocation_mode: opts?.allocation_mode || 'AI', reason: opts?.reason }),
+    }),
 
   // Reallocations
   getReallocations: (status?: string) =>

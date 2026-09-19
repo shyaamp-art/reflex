@@ -17,8 +17,8 @@ export const EmployeeTasks: React.FC<EmployeeTasksProps> = ({ currentUser }) => 
       setLoading(true);
       const res = await api.getEmployeeTasks(currentUser.employeeId || undefined);
       setItems(res.items);
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      alert(err.message || 'Error loading tasks');
     } finally {
       setLoading(false);
     }
@@ -32,8 +32,8 @@ export const EmployeeTasks: React.FC<EmployeeTasksProps> = ({ currentUser }) => 
     try {
       await api.updateEmployeeTaskStatus(taskId, status, currentUser.name);
       loadData();
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      alert(err.message || 'Error updating task status');
     }
   };
 
@@ -84,7 +84,7 @@ export const EmployeeTasks: React.FC<EmployeeTasksProps> = ({ currentUser }) => 
           {filtered.map(({ task, allocation }) => {
             const diff = new Date(task.sla_deadline).getTime() - Date.now();
             const hoursLeft = Math.round(diff / (60 * 60 * 1000));
-            const isUrgent = task.status !== 'COMPLETED' && hoursLeft <= 4 && hoursLeft > 0;
+            const isUrgent = task.status !== 'COMPLETED' && hoursLeft <= 4;
 
             return (
               <div

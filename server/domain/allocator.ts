@@ -6,6 +6,7 @@ import {
   Proficiency,
 } from '../../src/types/index.js';
 import { calculateCandidateScore, PROFICIENCY_LEVELS } from './scoring.js';
+import { applyPythonScores, getPythonSelection, optimizeWithPython } from './optimizer-client.js';
 
 export interface AllocationPlan {
   status: 'READY' | 'NO_FEASIBLE_MATCH';
@@ -24,24 +25,49 @@ export function buildAllocationPlan(
   task: Task,
   workforce: Employee[],
   now = new Date(),
-  activeTasksMap: Record<string, Pick<Task, 'id' | 'sla_deadline' | 'priority'>[]> = {}
+  activeTasksMap: Record<string, Pick<Task, 'id' | 'sla_deadline' | 'priority'>[]> = {},
+  slaLookaheadHours = 4
 ): AllocationPlan {
-  const requirements = task.skill_requirements || [];
+  const rawRequirements = task.skill_requirements || [];
+  // Merge duplicate requirements for the same skill so they are not
+  // double-counted: highest proficiency wins, MUST_HAVE wins, headcount is max.
+  const merged = new Map<string, TaskSkillRequirement>();
+  for (const req of rawRequirements) {
+    const key = req.skill_name.trim().toLowerCase();
+    const prev = merged.get(key);
+    if (!prev) {
+      merged.set(key, { ...req });
+    } else {
+      const levelOf = (p: TaskSkillRequirement['proficiency']) => PROFICIENCY_LEVELS[p] || 1;
+      merged.set(key, {
+        ...prev,
+        proficiency: levelOf(req.proficiency) > levelOf(prev.proficiency) ? req.proficiency : prev.proficiency,
+        people_required: Math.max(prev.people_required || 1, req.people_required || 1),
+        requirement_type: prev.requirement_type === 'MUST_HAVE' || req.requirement_type === 'MUST_HAVE' ? 'MUST_HAVE' : 'NICE_TO_HAVE',
+      });
+    }
+  }
+  const requirements = [...merged.values()];
   const totalHeadcountRequired = requirements.reduce(
     (acc, req) => Math.max(acc, req.people_required || 1),
     1
   );
 
   // 1. Calculate scores for all employees
-  const candidateScores: CandidateScore[] = workforce.map((employee) => {
+  let candidateScores: CandidateScore[] = workforce.map((employee) => {
     return calculateCandidateScore({
       task,
       requirements,
       employee,
       now,
       activeTasksForEmployee: activeTasksMap[employee.id] || [],
+      slaLookaheadHours,
     });
   });
+  const pythonResult = optimizeWithPython(task, workforce, totalHeadcountRequired);
+  if (pythonResult) {
+    candidateScores = applyPythonScores(candidateScores, pythonResult);
+  }
 
   // Rank all candidates: eligible first by score descending, then ineligible
   const rankedCandidates = [...candidateScores].sort((a, b) => {
@@ -66,7 +92,37 @@ export function buildAllocationPlan(
   const selectedCandidates: CandidateScore[] = [];
   const selectedEmpIds = new Set<string>();
 
-  // Greedy coverage selection loop
+  const pythonSelection = pythonResult ? getPythonSelection(pythonResult) : null;
+  if (pythonSelection) {
+    for (const candidate of rankedCandidates) {
+      if (pythonSelection.has(candidate.employeeId) && candidate.eligible) {
+        selectedCandidates.push(candidate);
+        selectedEmpIds.add(candidate.employeeId);
+      }
+    }
+
+    // Validate coverage for the Hungarian result using the same hard skill
+    // constraints used by the TypeScript fallback.
+    for (const candidate of selectedCandidates) {
+      const employee = workforce.find((item) => item.id === candidate.employeeId);
+      const skills = new Map<string, number>();
+      for (const skill of employee?.skills || []) {
+        const key = skill.skill_name.trim().toLowerCase();
+        skills.set(key, Math.max(skills.get(key) || 0, PROFICIENCY_LEVELS[skill.proficiency] || 1));
+      }
+      for (const requirement of requirementNeeds) {
+        if (
+          requirement.covered_count < requirement.required_count &&
+          (skills.get(requirement.skill_name) || 0) >= requirement.minLevel
+        ) {
+          requirement.covered_count += 1;
+        }
+      }
+    }
+  }
+
+  // Greedy coverage selection fills remaining headcount, including when the
+  // optional Python optimizer missed MUST_HAVE coverage or is unavailable.
   while (
     selectedCandidates.length < totalHeadcountRequired &&
     selectedCandidates.length < eligibleCandidates.length
@@ -82,7 +138,8 @@ export function buildAllocationPlan(
 
       const empSkillsMap = new Map<string, number>();
       for (const s of employeeObj.skills || []) {
-        empSkillsMap.set(s.skill_name.trim().toLowerCase(), PROFICIENCY_LEVELS[s.proficiency] || 1);
+        const key = s.skill_name.trim().toLowerCase();
+        empSkillsMap.set(key, Math.max(empSkillsMap.get(key) || 0, PROFICIENCY_LEVELS[s.proficiency] || 1));
       }
 
       // Calculate how many uncovered slots this candidate satisfies
@@ -118,7 +175,8 @@ export function buildAllocationPlan(
     if (chosenEmp) {
       const chosenSkillsMap = new Map<string, number>();
       for (const s of chosenEmp.skills || []) {
-        chosenSkillsMap.set(s.skill_name.trim().toLowerCase(), PROFICIENCY_LEVELS[s.proficiency] || 1);
+        const key = s.skill_name.trim().toLowerCase();
+        chosenSkillsMap.set(key, Math.max(chosenSkillsMap.get(key) || 0, PROFICIENCY_LEVELS[s.proficiency] || 1));
       }
       for (const req of requirementNeeds) {
         if (req.covered_count < req.required_count) {

@@ -18,6 +18,7 @@ import { updateSkillGapsOnFailure } from '../domain/skill-gap.js';
 import { buildAllocationPlan } from '../domain/allocator.js';
 import { supabase } from './supabase.js';
 import { SupabaseRepository } from './repository.js';
+import { ApiError } from '../http.js';
 
 export const MANAGER_AVATAR_URL = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
 export const EMPLOYEE_AVATAR_URL = 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80';
@@ -28,6 +29,18 @@ function nowDateOnly(): string {
 
 function formatDateOnly(date: Date): string {
   return date.toISOString().slice(0, 10);
+}
+
+let idCounter = 0;
+export function uid(prefix: string): string {
+  idCounter += 1;
+  return `${prefix}-${Date.now()}-${idCounter}-${Math.random().toString(36).substring(2, 8)}`;
+}
+
+export function requiredHeadcountFor(task: Pick<Task, 'skill_requirements'>): number {
+  const reqs = task.skill_requirements || [];
+  if (!reqs.length) return 1;
+  return Math.max(1, ...reqs.map((r) => r.people_required || 1));
 }
 
 export class ReflexStore {
@@ -90,8 +103,11 @@ export class ReflexStore {
 
   public async persist(): Promise<void> {
     if (supabase.mode !== 'supabase') return;
-    if (this.persistence) return this.persistence;
-    this.persistence = this.repository.persist(this).finally(() => { this.persistence = undefined; });
+    // Queue mutations instead of dropping them while a flush is in flight.
+    const run = (this.persistence || Promise.resolve())
+      .catch(() => undefined)
+      .then(() => this.repository.persist(this));
+    this.persistence = run.finally(() => { if (this.persistence === run) this.persistence = undefined; });
     return this.persistence;
   }
 
@@ -566,6 +582,30 @@ export class ReflexStore {
     return result;
   }
 
+  /**
+   * Workload for scoring is derived from active allocations, which already
+   * include the task being (re)allocated. Subtract this task's own effort for
+   * employees already assigned to it so projected workload is not double
+   * counted during re-allocation and staleness checks.
+   */
+  private workforceForScoring(taskId: string): Employee[] {
+    const task = this.tasks.find((t) => t.id === taskId);
+    if (!task) return this.employees;
+    const effort = Number(task.estimated_effort) || 0;
+    const assigned = new Set(
+      this.allocations
+        .filter((a) => a.task_id === taskId && a.status === 'ACTIVE')
+        .map((a) => a.employee_id)
+    );
+    if (!assigned.size || !effort) return this.employees;
+    return this.employees.map((emp) => {
+      if (!assigned.has(emp.id)) return emp;
+      const cap = emp.weekly_capacity_hours || 40;
+      const ownShare = (effort / cap) * 100;
+      return { ...emp, current_workload_percent: Math.max(0, (emp.current_workload_percent || 0) - ownShare) };
+    });
+  }
+
   // Get hydrated task with requirements, allocations, and employees
   public getHydratedTask(taskId: string): Task | null {
     const task = this.tasks.find((t) => t.id === taskId);
@@ -606,9 +646,40 @@ export class ReflexStore {
       const currentAllocations = this.allocations
         .filter((a) => a.task_id === p.task_id && a.status === 'ACTIVE')
         .map((a) => ({ ...a, employee: this.employees.find((e) => e.id === a.employee_id) }));
+      // Back-compat for UI reading proposal.candidates / proposal.trigger_type.
+      const candidates = items
+        .filter((it) => it.selected)
+        .concat(items.filter((it) => !it.selected))
+        .map((it) => {
+          const emp = this.employees.find((e) => e.id === it.employee_id);
+          return {
+            employeeId: it.employee_id,
+            employeeName: emp?.name || it.employee_id,
+            roleTitle: emp?.role_title || '',
+            seniority: emp?.seniority || 'MID',
+            team: emp?.team || '',
+            workMode: emp?.work_mode || 'REMOTE',
+            currentWorkload: emp?.current_workload_percent || 0,
+            projectedWorkload: emp?.current_workload_percent || 0,
+            eligible: true,
+            score: it.score,
+            breakdown: {
+              skillMatch: it.skill_match,
+              availability: it.availability,
+              workload: it.workload,
+              performance: it.performance,
+              slaSafety: it.sla_safety,
+              location: it.location,
+            },
+            rejectionReasons: [] as string[],
+            reason: it.reason,
+          };
+        });
 
       return {
         ...p,
+        trigger_type: p.trigger_type || event?.type as any,
+        candidates: (p as any).candidates?.length ? (p as any).candidates : candidates as any,
         task,
         event,
         items,
@@ -628,16 +699,32 @@ export class ReflexStore {
   }): { task: Task; allocations: Allocation[]; auditLogId: string } {
     const { taskId, employeeIds, allocatedBy, actorUserId, actorName, reason } = params;
     const task = this.tasks.find((t) => t.id === taskId);
-    if (!task) throw new Error(`Task with id ${taskId} not found`);
+    if (!task) throw new ApiError(404, 'NOT_FOUND', `Task with id ${taskId} not found`);
+    if (task.status === 'COMPLETED') throw new ApiError(409, 'CONFLICT', 'Cannot allocate a COMPLETED task');
     const uniqueEmployeeIds = [...new Set(employeeIds)];
-    if (!uniqueEmployeeIds.length) throw new Error('At least one employee is required');
-    if (uniqueEmployeeIds.length !== employeeIds.length) throw new Error('Duplicate employees are not allowed');
+    if (!uniqueEmployeeIds.length) throw new ApiError(422, 'VALIDATION_ERROR', 'At least one employee is required');
+    if (uniqueEmployeeIds.length !== employeeIds.length) throw new ApiError(409, 'CONFLICT', 'Duplicate employees are not allowed');
     if (uniqueEmployeeIds.some((id) => !this.employees.some((employee) => employee.id === id))) {
-      throw new Error('One or more employees were not found');
+      throw new ApiError(404, 'NOT_FOUND', 'One or more employees were not found');
     }
-    const plan = buildAllocationPlan(task, this.employees, new Date(), this.activeTasksForScoring(task.id));
-    const eligible = new Set(plan.rankedCandidates.filter((candidate) => candidate.eligible).map((candidate) => candidate.employeeId));
-    if (uniqueEmployeeIds.some((id) => !eligible.has(id))) throw new Error('Selected employees do not satisfy the task hard constraints');
+    const headcountRequired = requiredHeadcountFor(task);
+    if (uniqueEmployeeIds.length > headcountRequired) {
+      throw new ApiError(422, 'VALIDATION_ERROR', `Selection exceeds required headcount (${headcountRequired})`);
+    }
+    const plan = buildAllocationPlan(task, this.workforceForScoring(task.id), new Date(), this.activeTasksForScoring(task.id), this.agentSettings.sla_lookahead_hours || 4);
+    const candidateById = new Map(plan.rankedCandidates.map((candidate) => [candidate.employeeId, candidate]));
+    const invalidSelections = uniqueEmployeeIds
+      .map((id) => candidateById.get(id))
+      .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate && !candidate.eligible));
+    if (invalidSelections.length > 0) {
+      const details = invalidSelections
+        .map((candidate) => `${candidate.employeeName}: ${candidate.rejectionReasons.join('; ')}`)
+        .join(' | ');
+      throw new ApiError(422, 'VALIDATION_ERROR', `Selected employees do not satisfy the task hard constraints. ${details}`);
+    }
+    if (plan.status !== 'READY') {
+      throw new ApiError(422, 'VALIDATION_ERROR', 'No feasible allocation satisfies MUST_HAVE coverage and headcount');
+    }
 
     const beforeEmployees = this.allocations
       .filter((a) => a.task_id === taskId && a.status === 'ACTIVE')
@@ -662,7 +749,7 @@ export class ReflexStore {
       );
       if (!existing) {
         const newAlloc: Allocation = {
-          id: `alloc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          id: uid('alloc'),
           task_id: taskId,
           employee_id: empId,
           status: 'ACTIVE',
@@ -674,7 +761,8 @@ export class ReflexStore {
       }
     }
 
-    task.status = 'ASSIGNED';
+    // Never downgrade IN_PROGRESS or allocate onto COMPLETED.
+    if (task.status !== 'IN_PROGRESS') task.status = 'ASSIGNED';
     task.updated_at = nowStr;
 
     // Recalculate workloads
@@ -685,7 +773,7 @@ export class ReflexStore {
       .map((a) => this.employees.find((e) => e.id === a.employee_id)?.name || a.employee_id);
 
     // Create Audit Log
-    const auditLogId = `log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const auditLogId = uid('log');
     this.auditLogs.unshift({
       id: auditLogId,
       task_id: taskId,
@@ -718,8 +806,8 @@ export class ReflexStore {
   }): { releasedAllocation: Allocation; newProposal?: AllocationProposal } {
     const { allocationId, actorUserId, actorName, reason } = params;
     const alloc = this.allocations.find((a) => a.id === allocationId);
-    if (!alloc) throw new Error(`Allocation ${allocationId} not found`);
-    if (alloc.status !== 'ACTIVE') throw new Error('Allocation is already released');
+    if (!alloc) throw new ApiError(404, 'NOT_FOUND', `Allocation ${allocationId} not found`);
+    if (alloc.status !== 'ACTIVE') throw new ApiError(409, 'CONFLICT', 'Allocation is already released');
 
     const nowStr = new Date().toISOString();
     alloc.status = 'RELEASED';
@@ -741,7 +829,7 @@ export class ReflexStore {
 
     // Create Audit Log
     this.auditLogs.unshift({
-      id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      id: uid('log'),
       task_id: alloc.task_id,
       employee_id: alloc.employee_id,
       action: 'RELEASED',
@@ -759,31 +847,40 @@ export class ReflexStore {
     // If task has unassigned slots, automatically trigger reallocation proposal
     let newProposal: AllocationProposal | undefined;
     if (task && task.status !== 'COMPLETED') {
-      const evt: AppEvent = {
-        id: `evt-${Date.now()}`,
-        type: 'PERSON_UNAVAILABLE',
-        payload: { task_id: task.id, employee_id: alloc.employee_id, reason },
-        created_at: nowStr,
-      };
-      this.events.unshift(evt);
+      // One PENDING proposal per task — reuse the existing one instead of
+      // creating independently-approvable duplicates.
+      const existingPending = this.proposals.find(
+        (p) => p.task_id === task.id && p.status === 'PENDING'
+      );
+      if (existingPending) {
+        newProposal = existingPending;
+      } else {
+        const evt: AppEvent = {
+          id: uid('evt'),
+          type: 'PERSON_UNAVAILABLE',
+          payload: { task_id: task.id, employee_id: alloc.employee_id, reason },
+          created_at: nowStr,
+        };
+        this.events.unshift(evt);
 
-      const propResult = generateReallocationProposal({
-        event: evt,
-        affectedTask: task,
-        workforce: this.employees,
-        currentAllocations: remainingActive,
-        allActiveTasks: this.tasks.filter((t) => t.status !== 'COMPLETED'),
-      });
+        const propResult = generateReallocationProposal({
+          event: evt,
+          affectedTask: task,
+          workforce: this.employees,
+          currentAllocations: remainingActive,
+          allActiveTasks: this.tasks.filter((t) => t.status !== 'COMPLETED'),
+        });
 
-      newProposal = {
-        id: `prop-${Date.now()}`,
-        ...propResult.proposal,
-        created_at: nowStr,
-      };
-      this.proposals.unshift(newProposal);
+        newProposal = {
+          id: uid('prop'),
+          ...propResult.proposal,
+          created_at: nowStr,
+        };
+        this.proposals.unshift(newProposal);
 
-      if (propResult.uncoveredSkills.length > 0) {
-        this.skillGaps = updateSkillGapsOnFailure(this.skillGaps, propResult.uncoveredSkills, evt.id);
+        if (propResult.uncoveredSkills.length > 0) {
+          this.skillGaps = updateSkillGapsOnFailure(this.skillGaps, propResult.uncoveredSkills, evt.id, this.employees);
+        }
       }
     }
 
@@ -808,16 +905,16 @@ export class ReflexStore {
   } {
     const { employeeId, startDate, endDate, isAvailable, reason } = params;
     const emp = this.employees.find((e) => e.id === employeeId);
-    if (!emp) throw new Error(`Employee ${employeeId} not found`);
+    if (!emp) throw new ApiError(404, 'NOT_FOUND', `Employee ${employeeId} not found`);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || endDate < startDate) {
-      throw new Error('Availability dates must be YYYY-MM-DD with end_date on or after start_date');
+      throw new ApiError(422, 'VALIDATION_ERROR', 'Availability dates must be YYYY-MM-DD with end_date on or after start_date');
     }
 
     if (!emp.availability) emp.availability = [];
 
     const nowStr = new Date().toISOString();
     const newAvail = {
-      id: `avail-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      id: uid('avail'),
       employee_id: employeeId,
       start_date: startDate,
       end_date: endDate,
@@ -836,7 +933,7 @@ export class ReflexStore {
     // affect an allocation, so managers can see the employee state change.
     if (!isAvailable) {
       const event: AppEvent = {
-        id: `evt-${Date.now()}-availability`,
+        id: uid('evt'),
         type: 'PERSON_UNAVAILABLE',
         payload: {
           employee_id: employeeId,
@@ -864,7 +961,7 @@ export class ReflexStore {
           affectedTasksCount += 1;
 
           // Emit PERSON_UNAVAILABLE event
-          const eventId = `evt-${Date.now()}-${affectedTasksCount}`;
+          const eventId = uid('evt');
           const evt: AppEvent = {
             id: eventId,
             type: 'PERSON_UNAVAILABLE',
@@ -882,6 +979,12 @@ export class ReflexStore {
           this.events.unshift(evt);
           triggeredEvents.push(evt);
 
+          // One PENDING proposal per task — skip creation when one exists.
+          const existingPending = this.proposals.find(
+            (p) => p.task_id === task.id && p.status === 'PENDING'
+          );
+          if (existingPending) continue;
+
           // Generate dynamic reallocation proposal
           const propResult = generateReallocationProposal({
             event: evt,
@@ -893,7 +996,7 @@ export class ReflexStore {
             allActiveTasks: this.tasks.filter((t) => t.status !== 'COMPLETED'),
           });
 
-          const propId = `prop-${Date.now()}-${affectedTasksCount}`;
+          const propId = uid('prop');
           const proposal: AllocationProposal = {
             id: propId,
             ...propResult.proposal,
@@ -906,7 +1009,8 @@ export class ReflexStore {
             this.skillGaps = updateSkillGapsOnFailure(
               this.skillGaps,
               propResult.uncoveredSkills,
-              eventId
+              eventId,
+              this.employees,
             );
           }
         }
@@ -930,20 +1034,21 @@ export class ReflexStore {
   }): { proposal: AllocationProposal; allocations: Allocation[]; auditLogIds: string[] } {
     const { proposalId, actorUserId, actorName, decisionNote } = params;
     const proposal = this.proposals.find((p) => p.id === proposalId);
-    if (!proposal) throw new Error(`Proposal ${proposalId} not found`);
-    if (proposal.status !== 'PENDING') throw new Error(`Proposal is not in PENDING state (${proposal.status})`);
+    if (!proposal) throw new ApiError(404, 'NOT_FOUND', `Proposal ${proposalId} not found`);
+    if (proposal.status !== 'PENDING') throw new ApiError(409, 'CONFLICT', `Proposal is not in PENDING state (${proposal.status})`);
 
     const task = this.tasks.find((t) => t.id === proposal.task_id);
-    if (!task) throw new Error(`Task ${proposal.task_id} not found`);
+    if (!task) throw new ApiError(404, 'NOT_FOUND', `Task ${proposal.task_id} not found`);
+    if (task.status === 'COMPLETED') throw new ApiError(409, 'CONFLICT', 'Cannot approve allocation onto a COMPLETED task');
 
     const selectedItems = proposal.items.filter((it) => it.selected);
     if (selectedItems.length === 0) {
-      throw new Error('Proposal has no selected candidate items');
+      throw new ApiError(422, 'VALIDATION_ERROR', 'Proposal has no selected candidate items');
     }
-    const currentPlan = buildAllocationPlan(task, this.employees, new Date(), this.activeTasksForScoring(task.id));
+    const currentPlan = buildAllocationPlan(task, this.workforceForScoring(task.id), new Date(), this.activeTasksForScoring(task.id), this.agentSettings.sla_lookahead_hours || 4);
     const eligibleNow = new Set(currentPlan.rankedCandidates.filter((candidate) => candidate.eligible).map((candidate) => candidate.employeeId));
     if (currentPlan.status !== 'READY' || selectedItems.some((item) => !eligibleNow.has(item.employee_id))) {
-      throw new Error('Proposal is stale; workforce or task state has changed');
+      throw new ApiError(409, 'CONFLICT', 'Proposal is stale; workforce or task state has changed');
     }
 
     const nowStr = new Date().toISOString();
@@ -963,7 +1068,7 @@ export class ReflexStore {
     const createdAllocations: Allocation[] = [];
     for (const item of selectedItems) {
       const newAlloc: Allocation = {
-        id: `alloc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        id: uid('alloc'),
         task_id: task.id,
         employee_id: item.employee_id,
         status: 'ACTIVE',
@@ -979,7 +1084,7 @@ export class ReflexStore {
     proposal.decided_by = actorUserId || 'user-manager-1';
     proposal.decision_note = decisionNote || 'Approved AI Reallocation recommendation';
 
-    task.status = 'ASSIGNED';
+    if (task.status !== 'IN_PROGRESS') task.status = 'ASSIGNED';
     task.updated_at = nowStr;
 
     this.recalculateAllWorkloads();
@@ -989,7 +1094,7 @@ export class ReflexStore {
     );
 
     // Create Audit Log
-    const auditId = `log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const auditId = uid('log');
     this.auditLogs.unshift({
       id: auditId,
       task_id: task.id,
@@ -1000,7 +1105,7 @@ export class ReflexStore {
       actor_user_id: actorUserId,
       actor_name: actorName || 'Manager',
       before_state: { status: 'UNAVAILABLE / REPLACED', assigned_employees: beforeEmployees },
-      after_state: { status: 'ASSIGNED', assigned_employees: afterEmployees },
+      after_state: { status: task.status, assigned_employees: afterEmployees },
       reason: decisionNote || `Approved reallocation replacement for ${task.title}. Workloads and SLA bounds rebalanced.`,
       created_at: nowStr,
       task_title: task.title,
@@ -1024,21 +1129,22 @@ export class ReflexStore {
   }): { proposal: AllocationProposal; allocations: Allocation[]; auditLogIds: string[] } {
     const { proposalId, employeeIds, actorUserId, actorName, reason } = params;
     const proposal = this.proposals.find((p) => p.id === proposalId);
-    if (!proposal) throw new Error(`Proposal ${proposalId} not found`);
+    if (!proposal) throw new ApiError(404, 'NOT_FOUND', `Proposal ${proposalId} not found`);
 
     const task = this.tasks.find((t) => t.id === proposal.task_id);
-    if (!task) throw new Error(`Task ${proposal.task_id} not found`);
-    if (proposal.status !== 'PENDING') throw new Error(`Proposal is not in PENDING state (${proposal.status})`);
+    if (!task) throw new ApiError(404, 'NOT_FOUND', `Task ${proposal.task_id} not found`);
+    if (task.status === 'COMPLETED') throw new ApiError(409, 'CONFLICT', 'Cannot allocate onto a COMPLETED task');
+    if (proposal.status !== 'PENDING') throw new ApiError(409, 'CONFLICT', `Proposal is not in PENDING state (${proposal.status})`);
     const uniqueEmployeeIds = [...new Set(employeeIds)];
-    if (!uniqueEmployeeIds.length) throw new Error('At least one employee is required');
-    const requiredHeadcount = Math.max(1, ...(task.skill_requirements || []).map((requirement) => requirement.people_required || 1));
-    if (uniqueEmployeeIds.length > requiredHeadcount) throw new Error(`Override cannot exceed required headcount (${requiredHeadcount})`);
+    if (!uniqueEmployeeIds.length) throw new ApiError(422, 'VALIDATION_ERROR', 'At least one employee is required');
+    const requiredHeadcount = requiredHeadcountFor(task);
+    if (uniqueEmployeeIds.length > requiredHeadcount) throw new ApiError(422, 'VALIDATION_ERROR', `Override cannot exceed required headcount (${requiredHeadcount})`);
     if (uniqueEmployeeIds.some((id) => !this.employees.some((employee) => employee.id === id))) {
-      throw new Error('One or more employees were not found');
+      throw new ApiError(404, 'NOT_FOUND', 'One or more employees were not found');
     }
-    const plan = buildAllocationPlan(task, this.employees, new Date(), this.activeTasksForScoring(task.id));
+    const plan = buildAllocationPlan(task, this.workforceForScoring(task.id), new Date(), this.activeTasksForScoring(task.id), this.agentSettings.sla_lookahead_hours || 4);
     const eligible = new Set(plan.rankedCandidates.filter((candidate) => candidate.eligible).map((candidate) => candidate.employeeId));
-    if (uniqueEmployeeIds.some((id) => !eligible.has(id))) throw new Error('Override includes an ineligible employee');
+    if (uniqueEmployeeIds.some((id) => !eligible.has(id))) throw new ApiError(422, 'VALIDATION_ERROR', 'Override includes an ineligible employee');
 
     const nowStr = new Date().toISOString();
     const beforeEmployees = this.allocations
@@ -1056,7 +1162,7 @@ export class ReflexStore {
     const createdAllocations: Allocation[] = [];
     for (const empId of uniqueEmployeeIds) {
       const newAlloc: Allocation = {
-        id: `alloc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        id: uid('alloc'),
         task_id: task.id,
         employee_id: empId,
         status: 'ACTIVE',
@@ -1072,7 +1178,7 @@ export class ReflexStore {
     proposal.decided_by = actorUserId;
     proposal.decision_note = reason || 'Manager manual override';
 
-    task.status = 'ASSIGNED';
+    if (task.status !== 'IN_PROGRESS') task.status = 'ASSIGNED';
     task.updated_at = nowStr;
 
     this.recalculateAllWorkloads();
@@ -1081,7 +1187,7 @@ export class ReflexStore {
       (id) => this.employees.find((e) => e.id === id)?.name || id
     );
 
-    const auditId = `log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const auditId = uid('log');
     this.auditLogs.unshift({
       id: auditId,
       task_id: task.id,
@@ -1092,7 +1198,7 @@ export class ReflexStore {
       actor_user_id: actorUserId,
       actor_name: actorName || 'Manager',
       before_state: { assigned_employees: beforeEmployees },
-      after_state: { assigned_employees: afterEmployees, override: true },
+      after_state: { assigned_employees: afterEmployees, override: true, status: task.status },
       reason: reason || 'Manager manual override applied.',
       created_at: nowStr,
       task_title: task.title,
@@ -1126,7 +1232,9 @@ export class ReflexStore {
       const deadlineMs = new Date(task.sla_deadline).getTime();
       const diffMs = deadlineMs - nowMs;
 
-      if (diffMs > 0 && diffMs <= lookaheadMs) {
+      // Include breached (overdue) SLAs: anything at or past the deadline
+      // within the lookahead window is at risk.
+      if (diffMs <= lookaheadMs) {
         processedCount++;
 
         // Escalate priority if not yet CRITICAL
@@ -1136,7 +1244,7 @@ export class ReflexStore {
           task.updated_at = new Date().toISOString();
           escalatedCount++;
 
-          const evtId = `evt-${Date.now()}-${escalatedCount}`;
+          const evtId = uid('evt');
           const evt: AppEvent = {
             id: evtId,
             type: 'SLA_RISK',
@@ -1145,13 +1253,14 @@ export class ReflexStore {
               task_title: task.title,
               hours_remaining: Math.round((diffMs / (60 * 60 * 1000)) * 10) / 10,
               escalated_from: oldPriority,
+              breached: diffMs <= 0,
             },
             created_at: new Date().toISOString(),
           };
           this.events.unshift(evt);
 
           this.auditLogs.unshift({
-            id: `log-${Date.now()}-${escalatedCount}`,
+            id: uid('log'),
             task_id: task.id,
             employee_id: 'system',
             event_id: evtId,
@@ -1160,7 +1269,9 @@ export class ReflexStore {
             actor_name: 'SLA Automated Worker',
             before_state: { priority: oldPriority },
             after_state: { priority: 'CRITICAL' },
-            reason: `SLA deadline is in ${(diffMs / (60 * 60 * 1000)).toFixed(1)}h. Automated priority escalation triggered.`,
+            reason: diffMs <= 0
+              ? `SLA deadline breached ${Math.abs(diffMs / (60 * 60 * 1000)).toFixed(1)}h ago. Automated priority escalation triggered.`
+              : `SLA deadline is in ${(diffMs / (60 * 60 * 1000)).toFixed(1)}h. Automated priority escalation triggered.`,
             created_at: new Date().toISOString(),
             task_title: task.title,
           });
@@ -1182,7 +1293,7 @@ export class ReflexStore {
 
             if (propResult.proposal.status === 'PENDING') {
               this.proposals.unshift({
-                id: `prop-${Date.now()}-${escalatedCount}`,
+                id: uid('prop'),
                 ...propResult.proposal,
                 created_at: new Date().toISOString(),
               });

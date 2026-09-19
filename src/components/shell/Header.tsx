@@ -184,7 +184,9 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Authenticated identity */}
         <div className="flex items-center space-x-2.5 rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-1.5">
           <img
-            src={currentUser.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'}
+            src={currentUser.role === 'MANAGER'
+              ? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'
+              : 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80'}
             alt={currentUser.name}
             className="h-7 w-7 rounded-full object-cover ring-1 ring-slate-300"
           />

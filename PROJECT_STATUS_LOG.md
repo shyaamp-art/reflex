@@ -6,12 +6,30 @@
 
 ## Requested change log — 2026-09-19
 
-- [x] Added a login page that lets a manager or employee choose a workspace before the application shell loads. Production Supabase Auth remains a Phase 2 task.
+### Follow-up implementation log
+
+- [x] Standardized profile images to two role-based avatars: one shared manager profile image and one shared employee profile image. Supabase hydration also normalizes existing database rows to these two images.
+- [x] Fixed employee login navigation so a successful employee authentication opens `my-dashboard` instead of leaving the manager-only `dashboard` tab selected.
+- [x] Replaced workspace selection login with username/password login. The API resolves the username to the linked user email and verifies the password through Supabase Auth, where only the hash is stored.
+- [x] Corrected role middleware registration so manager and employee guards are installed once during app creation rather than during response completion.
+- [x] Ensured employee leave always emits a `PERSON_UNAVAILABLE` event, including when the employee has no active task; affected tasks still create reallocation proposals and skill-gap updates.
+- [x] Returned triggered leave events from the availability API so the employee workflow can confirm the event chain.
+- [x] Removed the in-app demo persona switcher from the authenticated header; changing roles now requires signing in with the corresponding credentials.
+- [x] Completed the remaining prototype-level identity/event wiring. Production JWT session validation, RLS, and transactional migrations remain the next production tasks.
+
+- [x] Added a username/password login page for manager and employee accounts backed by Supabase Auth.
 - [x] Added AI-suggestion and manual-assignment modes to task creation. Manual mode searches employees by name/role, supports clickable names, shows a profile window, and sends selected employee IDs to the backend.
 - [x] Renamed the manager navigation label from “Engineering Pool” to “Employees”.
 - [x] Added prototype API role guards for manager mutations and employee self-service routes, plus role-aware rendering for manager screens.
 - [x] Removed all user-facing and plan text containing the former legacy identifier.
 - [x] Expanded `REFLEX_MASTER_PLAN.md` with the current Express, repository, Supabase adapter, schema, route, and production database responsibilities.
+- [x] Added `supabase/reflex_schema.sql`, a fresh-database schema and deterministic sample-data artifact compatible with the current Express adapter.
+- [x] Added development-only Supabase Auth provisioning through `npm run seed:demo-auth`; passwords are managed and hashed by Supabase Auth rather than stored in `public.users`.
+- [x] Added unique per-user demo passwords with optional local overrides through `DEMO_ALEX_PASSWORD`, `DEMO_VIKRAM_PASSWORD`, `DEMO_ELENA_PASSWORD`, `DEMO_DAVID_PASSWORD`, `DEMO_MAYA_PASSWORD`, `DEMO_MARCUS_PASSWORD`, and `DEMO_AISHA_PASSWORD`.
+- [x] Retained manager/employee override variables for local testing while keeping Supabase Auth responsible for password hashing.
+- [x] Re-provisioned the seven demo Auth accounts with unique passwords and linked their Auth UUIDs to the matching `public.users` records.
+- [x] Ordered Supabase persistence writes so parent rows are written before task requirements, allocations, and audit rows, preventing foreign-key races.
+- [x] Verified live Supabase health, task reads, direct writes, and the read-only smoke test with `mode: "supabase"` and `connected: true`.
 
 The remaining production work is still tracked in the ordered plan below, especially
 Supabase Auth/session validation, `user_profiles`, RLS, migrations, durable
@@ -22,7 +40,7 @@ proposal tables, transactional writes, and live verification.
 
 The Reflex frontend and Express backend run locally. The backend is connected to the configured Supabase project and successfully reads the seeded operational data. The deterministic allocation, reallocation, SLA, audit, and skill-gap logic is implemented and tested offline.
 
-The current Supabase adapter targets the simplified schema that was executed in the Supabase SQL Editor. It is not yet the complete production schema described in the Reflex master plan. Authentication, authorization, RLS, durable proposal tables, and production-grade transactional writes remain to be completed.
+The current Supabase adapter targets the simplified schema that was executed in the Supabase SQL Editor. The new `supabase/reflex_schema.sql` documents a compatible expansion path and includes proposal/catalog tables, but it is not yet the complete production schema described in the Reflex master plan. Supabase Auth accounts are provisioned, while frontend password login, server-side session validation, authorization, and production-grade transactional writes remain to be completed.
 
 ## Completed work
 
@@ -104,6 +122,7 @@ The in-memory store includes:
   - skill gaps
   - agent settings
 - Added persistence writes for the same operational data.
+- Changed persistence ordering in `server/db/repository.ts` so foreign-key parents are persisted before dependent rows. This prevents allocations from racing ahead of their tasks during response-finish persistence.
 - Confirmed live Supabase reads for `users`, `employees`, and `tasks`.
 - Confirmed live API health reports:
 
@@ -117,6 +136,9 @@ The in-memory store includes:
 ### Database seed/schema artifacts
 
 - Added `supabase/seed.sql`.
+- Added `supabase/reflex_schema.sql` with the current adapter-compatible schema, development RLS policies, safe timestamp triggers, proposal tables, skills catalog, and deterministic sample data.
+- Deliberately kept readable text IDs such as `emp-1` and `task-1` in the compatibility schema; UUID migration remains a production migration task.
+- Deliberately omitted workload triggers so application workload recalculation remains the single current source of truth.
 - The executed SQL creates these simplified tables:
   - `users`
   - `employees`
@@ -132,6 +154,14 @@ The in-memory store includes:
 - The seed uses deterministic sample IDs and idempotent upserts.
 - The SQL was not executed by the application.
 
+### Demo authentication
+
+- Added `scripts/seed-demo-auth.ts`.
+- Added the `npm run seed:demo-auth` command.
+- The script creates or updates demo users through the Supabase Admin API, confirms their email, updates the matching `public.users` row, and never stores raw passwords in the application schema.
+- Default local demo password: `ReflexDemo!2026`.
+- The current `LoginPage` remains a prototype user selector; it has not yet been replaced with `supabase.auth.signInWithPassword()`.
+
 ### Validation completed
 
 The following checks pass:
@@ -141,6 +171,7 @@ npm run lint
 npm run test:backend
 npm run build
 npm run test:supabase:smoke
+npm run seed:demo-auth
 ```
 
 The backend integration test covers:

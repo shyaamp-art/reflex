@@ -121,6 +121,7 @@ export default function App() {
       setLoading(true);
       const result = await api.login(username, password);
       setCurrentUser(result.user);
+      setCurrentTab(result.user.role === 'EMPLOYEE' ? 'my-dashboard' : 'dashboard');
       await refreshAllData();
     } catch (err) {
       setLoading(false);

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { supabase } from './supabase.js';
 import type { ReflexStore } from './store.js';
+import { EMPLOYEE_AVATAR_URL, MANAGER_AVATAR_URL } from './store.js';
 
 const uuid = (value: string) => {
   if (/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(value)) return value;
@@ -27,7 +28,7 @@ export class SupabaseRepository {
 
     if (employees.length) {
       store.employees = employees.map((row: any) => ({
-        ...row, weekly_capacity_hours: Number(row.weekly_capacity_hours),
+        ...row, avatar_url: EMPLOYEE_AVATAR_URL, weekly_capacity_hours: Number(row.weekly_capacity_hours),
         current_workload_percent: Number(row.current_workload_percent),
         performance_score: Number(row.performance_score),
         skills: employeeSkills.filter((s: any) => s.employee_id === row.id),
@@ -37,7 +38,8 @@ export class SupabaseRepository {
     if (users.length) {
       (store as any).__userDbIds = new Map(users.map((u: any) => [u.auth_user_id, u.id]));
       store.users = users.map((u: any) => ({
-        authUserId: u.auth_user_id, role: u.role, employeeId: u.employee_id, name: u.name, email: u.email, avatar_url: u.avatar_url,
+        authUserId: u.auth_user_id, role: u.role, employeeId: u.employee_id, name: u.name, email: u.email,
+        avatar_url: u.role === 'MANAGER' ? MANAGER_AVATAR_URL : EMPLOYEE_AVATAR_URL,
       }));
     }
     if (tasks.length) store.tasks = tasks.map((t: any) => ({

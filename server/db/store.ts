@@ -19,6 +19,9 @@ import { buildAllocationPlan } from '../domain/allocator.js';
 import { supabase } from './supabase.js';
 import { SupabaseRepository } from './repository.js';
 
+export const MANAGER_AVATAR_URL = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+export const EMPLOYEE_AVATAR_URL = 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80';
+
 function nowDateOnly(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -101,7 +104,7 @@ export class ReflexStore {
         employeeId: null,
         name: 'Alex Rivera',
         email: 'alex.rivera@reflex.internal',
-        avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+        avatar_url: MANAGER_AVATAR_URL,
       },
       {
         authUserId: 'user-emp-1',
@@ -109,7 +112,7 @@ export class ReflexStore {
         employeeId: 'emp-1',
         name: 'Vikram Malhotra',
         email: 'vikram.m@reflex.internal',
-        avatar_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
+        avatar_url: EMPLOYEE_AVATAR_URL,
       },
       {
         authUserId: 'user-emp-2',
@@ -117,7 +120,7 @@ export class ReflexStore {
         employeeId: 'emp-2',
         name: 'Elena Rostova',
         email: 'elena.r@reflex.internal',
-        avatar_url: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80',
+        avatar_url: EMPLOYEE_AVATAR_URL,
       },
       {
         authUserId: 'user-emp-3',
@@ -125,7 +128,7 @@ export class ReflexStore {
         employeeId: 'emp-3',
         name: 'David Chen',
         email: 'david.c@reflex.internal',
-        avatar_url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80',
+        avatar_url: EMPLOYEE_AVATAR_URL,
       },
       {
         authUserId: 'user-emp-4',
@@ -133,7 +136,7 @@ export class ReflexStore {
         employeeId: 'emp-4',
         name: 'Maya Lin',
         email: 'maya.l@reflex.internal',
-        avatar_url: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80',
+        avatar_url: EMPLOYEE_AVATAR_URL,
       },
     ];
 
@@ -153,7 +156,7 @@ export class ReflexStore {
         performance_score: 4.8,
         location: 'Bengaluru, IN (IST)',
         timezone: 'Asia/Kolkata',
-        avatar_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
+        avatar_url: EMPLOYEE_AVATAR_URL,
         skills: [
           { id: 'es-1', employee_id: 'emp-1', skill_name: 'stripe', proficiency: 'EXPERT', verified: true },
           { id: 'es-2', employee_id: 'emp-1', skill_name: 'postgresql', proficiency: 'ADVANCED', verified: true },
@@ -177,7 +180,7 @@ export class ReflexStore {
         performance_score: 4.9,
         location: 'London, UK (GMT)',
         timezone: 'Europe/London',
-        avatar_url: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80',
+        avatar_url: EMPLOYEE_AVATAR_URL,
         skills: [
           { id: 'es-6', employee_id: 'emp-2', skill_name: 'kubernetes', proficiency: 'EXPERT', verified: true },
           { id: 'es-7', employee_id: 'emp-2', skill_name: 'aws', proficiency: 'EXPERT', verified: true },
@@ -201,7 +204,7 @@ export class ReflexStore {
         performance_score: 4.6,
         location: 'San Francisco, CA (PST)',
         timezone: 'America/Los_Angeles',
-        avatar_url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80',
+        avatar_url: EMPLOYEE_AVATAR_URL,
         skills: [
           { id: 'es-11', employee_id: 'emp-3', skill_name: 'react', proficiency: 'EXPERT', verified: true },
           { id: 'es-12', employee_id: 'emp-3', skill_name: 'typescript', proficiency: 'EXPERT', verified: true },
@@ -225,7 +228,7 @@ export class ReflexStore {
         performance_score: 4.7,
         location: 'Toronto, CA (EST)',
         timezone: 'America/Toronto',
-        avatar_url: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80',
+        avatar_url: EMPLOYEE_AVATAR_URL,
         skills: [
           { id: 'es-16', employee_id: 'emp-4', skill_name: 'stripe', proficiency: 'ADVANCED', verified: true },
           { id: 'es-17', employee_id: 'emp-4', skill_name: 'postgresql', proficiency: 'EXPERT', verified: true },
@@ -248,7 +251,7 @@ export class ReflexStore {
         performance_score: 4.5,
         location: 'New York, NY (EST)',
         timezone: 'America/New_York',
-        avatar_url: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=150&auto=format&fit=crop&q=80',
+        avatar_url: EMPLOYEE_AVATAR_URL,
         skills: [
           { id: 'es-20', employee_id: 'emp-5', skill_name: 'kafka', proficiency: 'EXPERT', verified: true },
           { id: 'es-21', employee_id: 'emp-5', skill_name: 'python', proficiency: 'ADVANCED', verified: true },
@@ -271,7 +274,7 @@ export class ReflexStore {
         performance_score: 4.8,
         location: 'San Francisco, CA (PST)',
         timezone: 'America/Los_Angeles',
-        avatar_url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
+        avatar_url: EMPLOYEE_AVATAR_URL,
         skills: [
           { id: 'es-24', employee_id: 'emp-6', skill_name: 'security audit', proficiency: 'EXPERT', verified: true },
           { id: 'es-25', employee_id: 'emp-6', skill_name: 'postgresql', proficiency: 'ADVANCED', verified: true },

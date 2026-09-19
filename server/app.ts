@@ -1,4 +1,5 @@
 import express from 'express';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { store } from './db/store.js';
 import { tasksRouter } from './routes/tasks.js';
 import { reallocationsRouter } from './routes/reallocations.js';
@@ -12,7 +13,32 @@ import { supabase } from './db/supabase.js';
 
 export function createApp() {
   const app = express();
-  let currentSessionIndex = 0;
+  const cookieSecret = process.env.AUTH_COOKIE_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || 'reflex-development-cookie-secret';
+  const authCookieName = 'reflex_auth';
+  const signAuthCookie = (authUserId: string) => {
+    const signature = createHmac('sha256', cookieSecret).update(authUserId).digest('base64url');
+    return `${authUserId}.${signature}`;
+  };
+  const readAuthUserId = (req: express.Request) => {
+    const cookieHeader = req.headers.cookie || '';
+    const value = cookieHeader.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${authCookieName}=`))?.slice(authCookieName.length + 1);
+    if (!value) return undefined;
+    const separator = value.lastIndexOf('.');
+    if (separator <= 0) return undefined;
+    const authUserId = value.slice(0, separator);
+    const signature = value.slice(separator + 1);
+    const expected = createHmac('sha256', cookieSecret).update(authUserId).digest('base64url');
+    if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return undefined;
+    return authUserId;
+  };
+  const currentUser = (req: express.Request) => {
+    const authUserId = readAuthUserId(req);
+    return store.users.find((user) => user.authUserId === authUserId) || store.users[0];
+  };
+  const setAuthCookie = (res: express.Response, authUserId: string) => {
+    const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+    res.setHeader('Set-Cookie', `${authCookieName}=${signAuthCookie(authUserId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${secure}`);
+  };
 
   app.use(express.json());
   // Hydrate before every request's route handler and flush mutations after the
@@ -32,11 +58,10 @@ export function createApp() {
         error: { code: 'PERSISTENCE_UNAVAILABLE', message: error instanceof Error ? error.message : 'Supabase unavailable' },
       });
 
-      const currentUser = () => store.users[currentSessionIndex] || store.users[0];
       const deny = (res: express.Response, message: string) =>
         res.status(403).json({ error: { code: 'FORBIDDEN', message } });
       const requireManager = (_req: express.Request, res: express.Response, next: express.NextFunction) => {
-        if (currentUser()?.role !== 'MANAGER') return deny(res, 'Manager role is required for this operation.');
+        if (currentUser(_req)?.role !== 'MANAGER') return deny(res, 'Manager role is required for this operation.');
         next();
       };
 
@@ -44,17 +69,17 @@ export function createApp() {
       app.use('/api/tasks', requireManager);
       app.use('/api/reallocations', requireManager);
       app.use('/api/settings', (req, res, next) => {
-        if (req.method === 'GET' || currentUser()?.role === 'MANAGER') return next();
+        if (req.method === 'GET' || currentUser(req)?.role === 'MANAGER') return next();
         return deny(res, 'Manager role is required for this operation.');
       });
       app.use('/api/employees', (req, res, next) => {
-        const user = currentUser();
+        const user = currentUser(req);
         if (user?.role === 'MANAGER') return next();
         if (req.method === 'GET' && req.path === `/${user?.employeeId}`) return next();
         return deny(res, 'Only managers may access workforce records.');
       });
       app.use('/api/employee', (req, res, next) => {
-        const user = currentUser();
+        const user = currentUser(req);
         if (user?.role !== 'EMPLOYEE') return deny(res, 'Employee role is required for this operation.');
         const requestedId = typeof req.query.employee_id === 'string' ? req.query.employee_id : req.body?.employee_id;
         if (requestedId && requestedId !== user.employeeId) return deny(res, 'Employees may only access their own records.');
@@ -74,15 +99,16 @@ export function createApp() {
   });
 
   app.get('/api/me', (_req, res) => {
-    const user = store.users[currentSessionIndex] || store.users[0];
+    const user = currentUser(_req);
     res.json({ user });
   });
 
   app.post('/api/me/switch-user', (req, res) => {
     const { userId } = req.body;
     const foundIdx = store.users.findIndex((u) => u.authUserId === userId || u.employeeId === userId);
-    if (foundIdx >= 0) currentSessionIndex = foundIdx;
-    res.json({ user: store.users[currentSessionIndex] });
+    const user = foundIdx >= 0 ? store.users[foundIdx] : currentUser(req);
+    if (user) setAuthCookie(res, user.authUserId);
+    res.json({ user });
   });
 
   app.post('/api/auth/login', async (req, res) => {
@@ -104,11 +130,16 @@ export function createApp() {
           password,
         });
         if (error) return res.status(401).json({ error: { code: 'INVALID_CREDENTIALS', message: 'Invalid username or password.' } });
+      } else if (supabase.mode === 'dummy') {
+        const dummyPassword = process.env.DEMO_AUTH_PASSWORD || 'ReflexDemo!2026';
+        if (password !== dummyPassword) {
+          return res.status(401).json({ error: { code: 'INVALID_CREDENTIALS', message: 'Invalid username or password.' } });
+        }
       } else {
-        return res.status(503).json({ error: { code: 'AUTH_UNAVAILABLE', message: 'Password authentication requires Supabase persistence.' } });
+        return res.status(503).json({ error: { code: 'AUTH_UNAVAILABLE', message: 'Password authentication is not configured.' } });
       }
 
-      currentSessionIndex = store.users.findIndex((candidate) => candidate.authUserId === user.authUserId);
+      setAuthCookie(res, user.authUserId);
       res.json({ user });
     } catch (error) {
       res.status(500).json({ error: { code: 'AUTH_ERROR', message: error instanceof Error ? error.message : 'Unable to sign in.' } });

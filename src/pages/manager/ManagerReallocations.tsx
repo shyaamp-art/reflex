@@ -67,7 +67,9 @@ export const ManagerReallocations: React.FC<ManagerReallocationsProps> = ({
         <div className="space-y-4">
           {filtered.map((prop) => {
             const selectedItems = (prop.items || []).filter((it) => it.selected);
-            const topItem = selectedItems[0] || prop.items?.[0];
+            // Never surface a rejected candidate as the transfer target: only
+            // recommended (selected) items or stored candidates qualify.
+            const topItem = selectedItems[0];
             const topItemEmployee = (topItem as any)?.employee;
             const top = prop.candidates?.[0] || (topItem
               ? {

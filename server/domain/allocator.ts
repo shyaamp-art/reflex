@@ -16,6 +16,7 @@ export interface AllocationPlan {
     skill_name: string;
     required_count: number;
     covered_count: number;
+    requirement_type: TaskSkillRequirement['requirement_type'];
   }[];
   totalHeadcountRequired: number;
   totalHeadcountFilled: number;
@@ -207,6 +208,7 @@ export function buildAllocationPlan(
       skill_name: r.skill_name,
       required_count: r.required_count,
       covered_count: r.covered_count,
+      requirement_type: r.requirement_type,
     })),
     totalHeadcountRequired,
     totalHeadcountFilled: selectedCandidates.length,

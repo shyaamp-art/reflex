@@ -15,6 +15,10 @@ export interface ReallocationContext {
   workforce: Employee[];
   currentAllocations: Allocation[];
   allActiveTasks?: Task[];
+  // Precomputed SLA map (employee -> active tasks). When omitted it is derived
+  // from allActiveTasks' embedded allocations (hydrated tasks only).
+  activeTasksMap?: Record<string, Pick<Task, 'id' | 'sla_deadline' | 'priority'>[]>;
+  slaLookaheadHours?: number;
 }
 
 export function generateReallocationProposal(context: ReallocationContext): {
@@ -39,25 +43,36 @@ export function generateReallocationProposal(context: ReallocationContext): {
     eligibleWorkforce = workforce.filter((e) => e.id !== unavailableEmpId);
   }
 
-  // Active tasks map for SLA safety
-  const activeTasksMap: Record<string, Pick<Task, 'id' | 'sla_deadline' | 'priority'>[]> = {};
-  for (const t of allActiveTasks) {
-    for (const alloc of t.allocations || []) {
-      if (alloc.status === 'ACTIVE') {
-        if (!activeTasksMap[alloc.employee_id]) {
-          activeTasksMap[alloc.employee_id] = [];
+  // Active tasks map for SLA safety. Prefer the caller-supplied map built from
+  // the allocation store; raw store tasks carry no embedded allocations, so
+  // deriving it here would silently yield an empty (overly optimistic) map.
+  const activeTasksMap: Record<string, Pick<Task, 'id' | 'sla_deadline' | 'priority'>[]> =
+    context.activeTasksMap || {};
+  if (!context.activeTasksMap) {
+    for (const t of allActiveTasks) {
+      for (const alloc of t.allocations || []) {
+        if (alloc.status === 'ACTIVE') {
+          if (!activeTasksMap[alloc.employee_id]) {
+            activeTasksMap[alloc.employee_id] = [];
+          }
+          activeTasksMap[alloc.employee_id].push({
+            id: t.id,
+            sla_deadline: t.sla_deadline,
+            priority: t.priority,
+          });
         }
-        activeTasksMap[alloc.employee_id].push({
-          id: t.id,
-          sla_deadline: t.sla_deadline,
-          priority: t.priority,
-        });
       }
     }
   }
 
   // Run allocation plan
-  const plan = buildAllocationPlan(affectedTask, eligibleWorkforce, new Date(), activeTasksMap);
+  const plan = buildAllocationPlan(
+    affectedTask,
+    eligibleWorkforce,
+    new Date(),
+    activeTasksMap,
+    context.slaLookaheadHours ?? 4,
+  );
 
   const proposalItems: AllocationProposalItem[] = plan.rankedCandidates.slice(0, 5).map((candidate, idx) => {
     const isSelected = plan.selected.some((s) => s.employeeId === candidate.employeeId);
@@ -79,8 +94,11 @@ export function generateReallocationProposal(context: ReallocationContext): {
     };
   });
 
+  // Only MUST_HAVE shortfalls block allocation or warrant skill-gap hiring
+  // signals. NICE_TO_HAVE gaps are informational and must not dead-end a
+  // proposal or pollute the hiring backlog.
   const uncoveredSkills: string[] = plan.uncoveredRequirements
-    .filter((u) => u.covered_count < u.required_count)
+    .filter((u) => u.requirement_type === 'MUST_HAVE' && u.covered_count < u.required_count)
     .map((u) => u.skill_name);
 
   let summary = '';

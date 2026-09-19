@@ -220,6 +220,7 @@ export interface AllocationSuggestionResult {
     skill_name: string;
     required_count: number;
     covered_count: number;
+    requirement_type?: 'MUST_HAVE' | 'NICE_TO_HAVE';
   }[];
   explanation?: {
     summary: string;

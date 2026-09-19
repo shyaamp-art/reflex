@@ -154,6 +154,22 @@ export class ReflexStore {
         email: 'maya.l@reflex.internal',
         avatar_url: EMPLOYEE_AVATAR_URL,
       },
+      {
+        authUserId: 'user-emp-5',
+        role: 'EMPLOYEE',
+        employeeId: 'emp-5',
+        name: 'Marcus Vance',
+        email: 'marcus.v@reflex.internal',
+        avatar_url: EMPLOYEE_AVATAR_URL,
+      },
+      {
+        authUserId: 'user-emp-6',
+        role: 'EMPLOYEE',
+        employeeId: 'emp-6',
+        name: 'Aisha Morales',
+        email: 'aisha.m@reflex.internal',
+        avatar_url: EMPLOYEE_AVATAR_URL,
+      },
     ];
 
     // 2. Seed Employees
@@ -606,6 +622,61 @@ export class ReflexStore {
     });
   }
 
+  // Build a fresh reallocation proposal for a task with scoring inputs that
+  // match the approve/override revalidation (store allocations, not the raw
+  // task objects which carry no embedded allocations).
+  private buildProposalForTask(task: Task, event: AppEvent): {
+    proposal: AllocationProposal;
+    uncoveredSkills: string[];
+  } {
+    const nowStr = new Date().toISOString();
+    const propResult = generateReallocationProposal({
+      event,
+      affectedTask: task,
+      workforce: this.employees,
+      currentAllocations: this.allocations.filter(
+        (a) => a.task_id === task.id && a.status === 'ACTIVE'
+      ),
+      activeTasksMap: this.activeTasksForScoring(task.id),
+      slaLookaheadHours: this.agentSettings.sla_lookahead_hours || 4,
+    });
+    return {
+      proposal: {
+        id: uid('prop'),
+        ...propResult.proposal,
+        created_at: nowStr,
+      },
+      uncoveredSkills: propResult.uncoveredSkills,
+    };
+  }
+
+  /**
+   * Recompute a task's open (PENDING or NO_FEASIBLE_MATCH) proposal in place so
+   * the manager queue never serves stale candidates (e.g. a leave window
+   * deleted after the proposal was created, or workloads shifted by newer
+   * allocations). The proposal id is preserved; the trigger event is updated
+   * to the latest one.
+   */
+  private refreshPendingProposal(
+    existing: AllocationProposal,
+    task: Task,
+    event: AppEvent
+  ): { proposal: AllocationProposal; uncoveredSkills: string[] } {
+    const fresh = this.buildProposalForTask(task, event);
+    existing.event_id = fresh.proposal.event_id;
+    existing.trigger_type = fresh.proposal.trigger_type;
+    existing.proposal_type = fresh.proposal.proposal_type;
+    existing.status = fresh.proposal.status;
+    existing.summary = fresh.proposal.summary;
+    existing.explanation = fresh.proposal.explanation;
+    existing.items = fresh.proposal.items;
+    (existing as any).candidates = (fresh.proposal as any).candidates;
+    existing.decided_at = undefined;
+    existing.decided_by = undefined;
+    existing.decision_note = `Refreshed after ${event.type} at ${event.created_at}.`;
+    return { proposal: existing, uncoveredSkills: fresh.uncoveredSkills };
+  }
+
   // Get hydrated task with requirements, allocations, and employees
   public getHydratedTask(taskId: string): Task | null {
     const task = this.tasks.find((t) => t.id === taskId);
@@ -847,39 +918,33 @@ export class ReflexStore {
     // If task has unassigned slots, automatically trigger reallocation proposal
     let newProposal: AllocationProposal | undefined;
     if (task && task.status !== 'COMPLETED') {
-      // One PENDING proposal per task — reuse the existing one instead of
-      // creating independently-approvable duplicates.
+      const evt: AppEvent = {
+        id: uid('evt'),
+        type: 'PERSON_UNAVAILABLE',
+        payload: { task_id: task.id, employee_id: alloc.employee_id, reason },
+        created_at: nowStr,
+      };
+      this.events.unshift(evt);
+
+      // One open proposal per task — refresh the existing PENDING or
+      // NO_FEASIBLE_MATCH one instead of creating duplicates or stacking
+      // repeated no-match alerts. Decided proposals are never touched.
       const existingPending = this.proposals.find(
-        (p) => p.task_id === task.id && p.status === 'PENDING'
+        (p) => p.task_id === task.id && (p.status === 'PENDING' || p.status === 'NO_FEASIBLE_MATCH')
       );
       if (existingPending) {
-        newProposal = existingPending;
+        const refreshed = this.refreshPendingProposal(existingPending, task, evt);
+        newProposal = refreshed.proposal;
+        if (refreshed.uncoveredSkills.length > 0) {
+          this.skillGaps = updateSkillGapsOnFailure(this.skillGaps, refreshed.uncoveredSkills, evt.id, this.employees);
+        }
       } else {
-        const evt: AppEvent = {
-          id: uid('evt'),
-          type: 'PERSON_UNAVAILABLE',
-          payload: { task_id: task.id, employee_id: alloc.employee_id, reason },
-          created_at: nowStr,
-        };
-        this.events.unshift(evt);
-
-        const propResult = generateReallocationProposal({
-          event: evt,
-          affectedTask: task,
-          workforce: this.employees,
-          currentAllocations: remainingActive,
-          allActiveTasks: this.tasks.filter((t) => t.status !== 'COMPLETED'),
-        });
-
-        newProposal = {
-          id: uid('prop'),
-          ...propResult.proposal,
-          created_at: nowStr,
-        };
+        const built = this.buildProposalForTask(task, evt);
+        newProposal = built.proposal;
         this.proposals.unshift(newProposal);
 
-        if (propResult.uncoveredSkills.length > 0) {
-          this.skillGaps = updateSkillGapsOnFailure(this.skillGaps, propResult.uncoveredSkills, evt.id, this.employees);
+        if (built.uncoveredSkills.length > 0) {
+          this.skillGaps = updateSkillGapsOnFailure(this.skillGaps, built.uncoveredSkills, evt.id, this.employees);
         }
       }
     }
@@ -979,36 +1044,37 @@ export class ReflexStore {
           this.events.unshift(evt);
           triggeredEvents.push(evt);
 
-          // One PENDING proposal per task — skip creation when one exists.
+          // One open proposal per task — refresh it when workforce state
+          // changed instead of stacking independently-approvable duplicates,
+          // repeated no-match alerts, or stale candidates in the manager queue.
           const existingPending = this.proposals.find(
-            (p) => p.task_id === task.id && p.status === 'PENDING'
+            (p) => p.task_id === task.id && (p.status === 'PENDING' || p.status === 'NO_FEASIBLE_MATCH')
           );
-          if (existingPending) continue;
+          if (existingPending) {
+            const refreshed = this.refreshPendingProposal(existingPending, task, evt);
+            createdProposalsCount += 1;
+            if (refreshed.uncoveredSkills.length > 0) {
+              this.skillGaps = updateSkillGapsOnFailure(
+                this.skillGaps,
+                refreshed.uncoveredSkills,
+                eventId,
+                this.employees,
+              );
+            }
+            continue;
+          }
 
           // Generate dynamic reallocation proposal
-          const propResult = generateReallocationProposal({
-            event: evt,
-            affectedTask: task,
-            workforce: this.employees,
-            currentAllocations: this.allocations.filter(
-              (a) => a.task_id === task.id && a.status === 'ACTIVE'
-            ),
-            allActiveTasks: this.tasks.filter((t) => t.status !== 'COMPLETED'),
-          });
+          const built = this.buildProposalForTask(task, evt);
 
-          const propId = uid('prop');
-          const proposal: AllocationProposal = {
-            id: propId,
-            ...propResult.proposal,
-            created_at: nowStr,
-          };
+          const proposal: AllocationProposal = built.proposal;
           this.proposals.unshift(proposal);
           createdProposalsCount += 1;
 
-          if (propResult.uncoveredSkills.length > 0) {
+          if (built.uncoveredSkills.length > 0) {
             this.skillGaps = updateSkillGapsOnFailure(
               this.skillGaps,
-              propResult.uncoveredSkills,
+              built.uncoveredSkills,
               eventId,
               this.employees,
             );
@@ -1056,17 +1122,26 @@ export class ReflexStore {
       .filter((a) => a.task_id === task.id && a.status === 'ACTIVE')
       .map((a) => this.employees.find((e) => e.id === a.employee_id)?.name || a.employee_id);
 
-    // Release old active allocations for this task
+    // Release old active allocations for this task, keeping holders who remain
+    // selected so approval does not churn unchanged assignments.
+    const selectedIds = new Set(selectedItems.map((item) => item.employee_id));
     for (const alloc of this.allocations) {
-      if (alloc.task_id === task.id && alloc.status === 'ACTIVE') {
+      if (alloc.task_id === task.id && alloc.status === 'ACTIVE' && !selectedIds.has(alloc.employee_id)) {
         alloc.status = 'RELEASED';
         alloc.released_at = nowStr;
       }
     }
 
-    // Allocate new approved candidates
+    // Allocate new approved candidates, retaining already-active ones.
     const createdAllocations: Allocation[] = [];
     for (const item of selectedItems) {
+      const retained = this.allocations.find(
+        (a) => a.task_id === task.id && a.employee_id === item.employee_id && a.status === 'ACTIVE'
+      );
+      if (retained) {
+        createdAllocations.push(retained);
+        continue;
+      }
       const newAlloc: Allocation = {
         id: uid('alloc'),
         task_id: task.id,
@@ -1134,26 +1209,46 @@ export class ReflexStore {
     const task = this.tasks.find((t) => t.id === proposal.task_id);
     if (!task) throw new ApiError(404, 'NOT_FOUND', `Task ${proposal.task_id} not found`);
     if (task.status === 'COMPLETED') throw new ApiError(409, 'CONFLICT', 'Cannot allocate onto a COMPLETED task');
-    if (proposal.status !== 'PENDING') throw new ApiError(409, 'CONFLICT', `Proposal is not in PENDING state (${proposal.status})`);
+    // Overrides are allowed on PENDING and on NO_FEASIBLE_MATCH proposals: the
+    // latter is a recovery path (manager picks after freeing capacity), and
+    // eligibility is always revalidated live below. Decided proposals stay
+    // immutable to prevent double execution.
+    if (proposal.status !== 'PENDING' && proposal.status !== 'NO_FEASIBLE_MATCH') {
+      throw new ApiError(409, 'CONFLICT', `Proposal is not in PENDING state (${proposal.status})`);
+    }
     const uniqueEmployeeIds = [...new Set(employeeIds)];
     if (!uniqueEmployeeIds.length) throw new ApiError(422, 'VALIDATION_ERROR', 'At least one employee is required');
+    if (uniqueEmployeeIds.length !== employeeIds.length) throw new ApiError(409, 'CONFLICT', 'Duplicate employees are not allowed');
     const requiredHeadcount = requiredHeadcountFor(task);
     if (uniqueEmployeeIds.length > requiredHeadcount) throw new ApiError(422, 'VALIDATION_ERROR', `Override cannot exceed required headcount (${requiredHeadcount})`);
     if (uniqueEmployeeIds.some((id) => !this.employees.some((employee) => employee.id === id))) {
       throw new ApiError(404, 'NOT_FOUND', 'One or more employees were not found');
     }
     const plan = buildAllocationPlan(task, this.workforceForScoring(task.id), new Date(), this.activeTasksForScoring(task.id), this.agentSettings.sla_lookahead_hours || 4);
-    const eligible = new Set(plan.rankedCandidates.filter((candidate) => candidate.eligible).map((candidate) => candidate.employeeId));
-    if (uniqueEmployeeIds.some((id) => !eligible.has(id))) throw new ApiError(422, 'VALIDATION_ERROR', 'Override includes an ineligible employee');
+    const candidateById = new Map(plan.rankedCandidates.map((candidate) => [candidate.employeeId, candidate]));
+    const ineligibleSelections = uniqueEmployeeIds
+      .map((id) => ({ id, candidate: candidateById.get(id) }))
+      .filter(({ candidate }) => !candidate || !candidate.eligible);
+    if (ineligibleSelections.length > 0) {
+      const details = ineligibleSelections
+        .map(({ id, candidate }) => {
+          const name = candidate?.employeeName || this.employees.find((e) => e.id === id)?.name || id;
+          const reasons = candidate?.rejectionReasons?.length ? candidate.rejectionReasons.join('; ') : 'did not satisfy the task hard constraints';
+          return `${name}: ${reasons}`;
+        })
+        .join(' | ');
+      throw new ApiError(422, 'VALIDATION_ERROR', `Override includes ineligible employees. ${details}`);
+    }
 
     const nowStr = new Date().toISOString();
     const beforeEmployees = this.allocations
       .filter((a) => a.task_id === task.id && a.status === 'ACTIVE')
       .map((a) => this.employees.find((e) => e.id === a.employee_id)?.name || a.employee_id);
 
-    // Release old allocations
+    // Release old allocations, keeping holders who remain selected.
+    const overrideIds = new Set(uniqueEmployeeIds);
     for (const alloc of this.allocations) {
-      if (alloc.task_id === task.id && alloc.status === 'ACTIVE') {
+      if (alloc.task_id === task.id && alloc.status === 'ACTIVE' && !overrideIds.has(alloc.employee_id)) {
         alloc.status = 'RELEASED';
         alloc.released_at = nowStr;
       }
@@ -1161,6 +1256,13 @@ export class ReflexStore {
 
     const createdAllocations: Allocation[] = [];
     for (const empId of uniqueEmployeeIds) {
+      const retained = this.allocations.find(
+        (a) => a.task_id === task.id && a.employee_id === empId && a.status === 'ACTIVE'
+      );
+      if (retained) {
+        createdAllocations.push(retained);
+        continue;
+      }
       const newAlloc: Allocation = {
         id: uid('alloc'),
         task_id: task.id,
@@ -1276,28 +1378,32 @@ export class ReflexStore {
             task_title: task.title,
           });
 
-          // Check if there is already a PENDING proposal for this task
+          // One open proposal per task — refresh it so SLA re-scans never
+          // leave stale candidates or stacked no-match alerts in the queue.
           const existingPending = this.proposals.find(
-            (p) => p.task_id === task.id && p.status === 'PENDING'
+            (p) => p.task_id === task.id && (p.status === 'PENDING' || p.status === 'NO_FEASIBLE_MATCH')
           );
-          if (!existingPending) {
-            const propResult = generateReallocationProposal({
-              event: evt,
-              affectedTask: task,
-              workforce: this.employees,
-              currentAllocations: this.allocations.filter(
-                (a) => a.task_id === task.id && a.status === 'ACTIVE'
-              ),
-              allActiveTasks: this.tasks.filter((t) => t.status !== 'COMPLETED'),
-            });
-
-            if (propResult.proposal.status === 'PENDING') {
-              this.proposals.unshift({
-                id: uid('prop'),
-                ...propResult.proposal,
-                created_at: new Date().toISOString(),
-              });
+          if (existingPending) {
+            const refreshed = this.refreshPendingProposal(existingPending, task, evt);
+            if (refreshed.proposal.status === 'PENDING') {
               proposalsCount++;
+            }
+            if (refreshed.uncoveredSkills.length > 0) {
+              this.skillGaps = updateSkillGapsOnFailure(this.skillGaps, refreshed.uncoveredSkills, evtId, this.employees);
+            }
+          } else {
+            const built = this.buildProposalForTask(task, evt);
+
+            if (built.proposal.status === 'PENDING') {
+              this.proposals.unshift(built.proposal);
+              proposalsCount++;
+            } else {
+              // Keep NO_FEASIBLE_MATCH visible so managers see why no transfer
+              // is possible instead of an empty queue.
+              this.proposals.unshift(built.proposal);
+            }
+            if (built.uncoveredSkills.length > 0) {
+              this.skillGaps = updateSkillGapsOnFailure(this.skillGaps, built.uncoveredSkills, evtId, this.employees);
             }
           }
         }

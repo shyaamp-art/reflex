@@ -78,7 +78,7 @@ mode.
 Eligible candidates are ranked with this weighted composite score:
 
 | Factor | Weight | Purpose |
-| --- | ---: | --- |
+| ---| ---: | --- |
 | Skill match | 35% | Compare required and available proficiency |
 | Availability | 15% | Account for leave and projected completion horizon |
 | Workload | 20% | Prefer capacity while enforcing the workload ceiling |
@@ -167,8 +167,9 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000). The default `dummy` mode
-uses seeded in-memory data and does not require Supabase, credentials, or a
-network connection.
+uses seeded in-memory data and does not require Supabase or a network
+connection. Sign in with any seeded user's email or full name and the default
+local password `ReflexDemo!2026` (override it with `DEMO_AUTH_PASSWORD`).
 
 ### Environment variables
 
@@ -178,13 +179,17 @@ Create a `.env` file when using Supabase or Gemini. The important settings are:
 REFLEX_PERSISTENCE=dummy
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_PUBLISHABLE_KEY=
 GEMINI_API_KEY=
 ```
 
 Set `REFLEX_PERSISTENCE=supabase` with `SUPABASE_URL` and the server-only
 `SUPABASE_SERVICE_ROLE_KEY` to hydrate and persist the demo data. Never expose
-the service-role key to the browser. `GEMINI_API_KEY` is optional; deterministic
-explanations are used when it is absent.
+the service-role key to the browser. In Vercel, configure these variables for
+the deployed environment (Production and Preview as needed), plus a stable
+random `AUTH_COOKIE_SECRET`; otherwise each deployment can fall back to
+in-memory mode or invalidate login cookies. `GEMINI_API_KEY` is optional;
+deterministic explanations are used when it is absent.
 
 ## Reallocation Demo
 

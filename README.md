@@ -2,11 +2,11 @@
 
 **AI workforce decision and resource allocation agent**
 
-![TypeScript]
-![React]
-![Vite]
-![Express]
-![Supabase]
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white)
+![React](https://img.shields.io/badge/React-61DAFB?style=flat&logo=react&logoColor=black)
+![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat&logo=vite&logoColor=white)
+![Express](https://img.shields.io/badge/Express-000000?style=flat&logo=express&logoColor=white)
+![Supabase](https://img.shields.io/badge/Supabase-3ECF8E?style=flat&logo=supabase&logoColor=white)
 
 Live demo: [aresreflex.vercel.app](https://aresreflex.vercel.app)
 
